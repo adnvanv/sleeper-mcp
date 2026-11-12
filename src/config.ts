@@ -43,10 +43,22 @@ export interface SleeperConfig {
   /** Dashboard bind address. 127.0.0.1 = this machine only; 0.0.0.0 = LAN. */
   dashboardHost: string;
   dashboardPort: number;
+  /** HTTP MCP endpoint (for claude.ai / phone). Keep on 127.0.0.1 behind Funnel. */
+  mcpHttpHost: string;
+  mcpHttpPort: number;
+  /** Secret path segment: the endpoint is /mcp/<secret>. */
+  mcpHttpSecret?: string;
 }
 
 export const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
 export const DEFAULT_DASHBOARD_PORT = 3030;
+export const DEFAULT_MCP_HTTP_HOST = "127.0.0.1";
+export const DEFAULT_MCP_HTTP_PORT = 3031;
+
+function parsePort(value: string | undefined, fallback: number): number {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
+}
 
 /**
  * Real environment variables win over values from the .env file.
@@ -57,15 +69,14 @@ export function loadConfig(
 ): SleeperConfig {
   const pick = (key: string) =>
     (env[key] || fileValues[key] || "").trim() || undefined;
-  const port = Number(pick("DASHBOARD_PORT"));
   return {
     username: pick("SLEEPER_USERNAME"),
     leagueId: pick("SLEEPER_LEAGUE_ID"),
     dashboardHost: pick("DASHBOARD_HOST") || DEFAULT_DASHBOARD_HOST,
-    dashboardPort:
-      Number.isInteger(port) && port > 0 && port < 65536
-        ? port
-        : DEFAULT_DASHBOARD_PORT,
+    dashboardPort: parsePort(pick("DASHBOARD_PORT"), DEFAULT_DASHBOARD_PORT),
+    mcpHttpHost: pick("MCP_HTTP_HOST") || DEFAULT_MCP_HTTP_HOST,
+    mcpHttpPort: parsePort(pick("MCP_HTTP_PORT"), DEFAULT_MCP_HTTP_PORT),
+    mcpHttpSecret: pick("MCP_HTTP_SECRET"),
   };
 }
 

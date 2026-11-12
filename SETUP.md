@@ -1,8 +1,8 @@
 # Setup Guide
 
 How to install the Sleeper MCP server, connect it to Claude Desktop, and run
-the web dashboard: on Windows first, then on an Ubuntu home server so you can
-open the dashboard from your phone.
+the web dashboard: on Windows first, then on an Ubuntu home server, so you can
+open the dashboard over Tailscale and use the tools from the Claude phone app.
 
 For what the project does and how it works, see [PROJECT.md](PROJECT.md).
 
@@ -57,7 +57,7 @@ npm run smoke -- get_user_leagues '{}'
 ## 4. Check it works
 
 ```bash
-npm test                                   # builds, then 82 tests
+npm test                                   # builds, then runs all tests
 npm run smoke                              # lists tools, prints NFL state
 npm run smoke -- get_all_play_records '{}' # calls one tool against live data
 ```
@@ -227,16 +227,139 @@ The service runs `dist/` directly, so after `git pull`, run `npm run build` and
 
 ### Open it from your phone
 
-1. Find the server's address: `hostname -I` (for example `192.168.1.50`).
-2. If the firewall is on: `sudo ufw allow from 192.168.0.0/16 to any port 3030`.
-3. On your phone, on the same Wi-Fi, open `http://192.168.1.50:3030`.
+**At home on Wi-Fi:** find the server's address with `hostname -I` (for
+example `192.168.1.50`) and open `http://192.168.1.50:3030` on your phone. If
+the firewall is on, run `sudo ufw allow from 192.168.0.0/16 to any port 3030`.
 
-To reach it away from home, put it behind a private VPN such as Tailscale or
-WireGuard rather than forwarding the port on your router. The dashboard has no
-login. It only shows public league data, but there's no reason to expose it to
-the internet.
+**Anywhere, over Tailscale (recommended):** with Tailscale on both the server
+and your phone, open `http://<server-name>:3030`. Use the machine name shown in
+the Tailscale app, or its `100.x.x.x` address. To allow only Tailscale devices
+through the firewall:
 
-## 8. Updating
+```bash
+sudo ufw allow in on tailscale0 to any port 3030
+```
+
+Don't forward the port on your router. The dashboard has no login, so keep it
+on your home network or Tailscale.
+
+## 8. Use the tools from Claude on your phone
+
+Claude Desktop starts the MCP server itself, on your computer. The Claude phone
+app can't do that. It uses **custom connectors**, which are MCP servers on the
+web that Claude connects to from Anthropic's servers. So the phone setup needs:
+
+1. The server's **HTTP mode** (`npm run mcp:http`) running on your Ubuntu box.
+2. A **public HTTPS address** for it. Tailscale Funnel gives you one without
+   opening router ports. (Tailscale alone isn't enough: Claude's servers
+   aren't on your tailnet.)
+3. The address added as a **custom connector** at claude.ai. Connectors you
+   add there also appear in the phone app.
+
+Only the MCP endpoint goes public. The dashboard stays private on Tailscale.
+
+### Step 1: Set a secret and start HTTP mode
+
+The endpoint only answers at `/mcp/<secret>`. Every other address returns
+"not found", so nobody can use it without the secret. Run once to get a fresh
+secret:
+
+```bash
+cd ~/sleeper-mcp
+npm run mcp:http
+```
+
+It stops and prints a line like `MCP_HTTP_SECRET=Xy3…`. Add that line to
+`.env`, which should now contain:
+
+```ini
+SLEEPER_USERNAME=your_sleeper_username
+SLEEPER_LEAGUE_ID=your_league_id
+MCP_HTTP_SECRET=<the printed value>
+MCP_HTTP_HOST=127.0.0.1
+MCP_HTTP_PORT=3031
+```
+
+Keep `MCP_HTTP_HOST=127.0.0.1`: Funnel connects locally, so nothing else needs
+to reach this port. Treat the secret like a password. It's in `.env`, which git
+ignores, and never goes in the repo.
+
+Run it as a service, like the dashboard. Create
+`/etc/systemd/system/sleeper-mcp-http.service`:
+
+```ini
+[Unit]
+Description=Sleeper MCP (HTTP) for Claude connectors
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=youruser
+WorkingDirectory=/home/youruser/sleeper-mcp
+ExecStart=/usr/bin/node dist/http-server.js
+Restart=on-failure
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now sleeper-mcp-http
+curl http://127.0.0.1:3031/health        # {"ok":true}
+```
+
+### Step 2: Publish it with Tailscale Funnel
+
+```bash
+sudo tailscale funnel --bg 3031
+tailscale funnel status
+```
+
+The first time, Tailscale may print a link to turn on HTTPS certificates and
+Funnel for your tailnet in the admin console. Approve it and run the command
+again. The status output shows your public address, for example
+`https://myserver.tail1234.ts.net`. Funnel forwards it to port 3031 on the
+server and handles the HTTPS certificate.
+
+Your connector URL is that address plus the secret path:
+
+```
+https://myserver.tail1234.ts.net/mcp/<MCP_HTTP_SECRET>
+```
+
+Test it from any computer with the repo:
+
+```bash
+npm run smoke -- --url "https://myserver.tail1234.ts.net/mcp/<secret>"
+```
+
+It should list 23 tools and print the NFL state. Funnel settings survive
+reboots. To take the endpoint offline: `sudo tailscale funnel reset`.
+
+### Step 3: Add the connector in Claude
+
+1. On claude.ai (web), open **Settings → Connectors** and choose **Add custom
+   connector**. Custom connectors may depend on your Claude plan.
+2. Name it `Sleeper` and paste the full URL from step 2, including the secret.
+   Leave the authentication / OAuth fields empty.
+3. In the phone app, start a chat, open the tools menu, and turn **Sleeper**
+   on.
+
+Then ask "who should I pick up this week?" from your phone.
+
+### Security notes
+
+- Everything is read-only, and the data is public Sleeper data. The worst
+  case for a leaked secret is someone else using your server's Sleeper API
+  calls.
+- If the secret leaks, change `MCP_HTTP_SECRET` in `.env`, run
+  `sudo systemctl restart sleeper-mcp-http`, and update the connector URL.
+- Only `/mcp/<secret>` and `/health` respond. The dashboard is a separate
+  process on a separate port and is not public.
+
+## 9. Updating
 
 ```bash
 git pull
@@ -244,9 +367,10 @@ npm install
 npm run build
 ```
 
-Then restart Claude Desktop (fully, from the tray) and/or the dashboard.
+Then restart whatever you run: Claude Desktop (fully, from the tray), and on the server
+`sudo systemctl restart sleeper-dashboard sleeper-mcp-http`.
 
-## 9. Housekeeping
+## 10. Housekeeping
 
 - The player database (about 19 MB) is cached in `.cache/` and refreshed once
   a day, as Sleeper asks. The NFL schedule is cached there too. Deleting

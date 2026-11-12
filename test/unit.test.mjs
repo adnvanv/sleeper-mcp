@@ -55,10 +55,27 @@ test("dashboard host and port default and validate", () => {
     [loadConfig({}, {}).dashboardHost, loadConfig({}, {}).dashboardPort],
     ["127.0.0.1", 3030],
   );
-  const cfg = loadConfig({ DASHBOARD_HOST: "0.0.0.0" }, { DASHBOARD_PORT: "8080" });
+  const cfg = loadConfig(
+    { DASHBOARD_HOST: "0.0.0.0" },
+    { DASHBOARD_PORT: "8080" },
+  );
   assert.deepEqual([cfg.dashboardHost, cfg.dashboardPort], ["0.0.0.0", 8080]);
   assert.equal(loadConfig({ DASHBOARD_PORT: "nope" }, {}).dashboardPort, 3030);
   assert.equal(loadConfig({ DASHBOARD_PORT: "70000" }, {}).dashboardPort, 3030);
+});
+
+test("MCP HTTP settings default to localhost:3031 with no secret", () => {
+  const d = loadConfig({}, {});
+  assert.deepEqual(
+    [d.mcpHttpHost, d.mcpHttpPort, d.mcpHttpSecret],
+    ["127.0.0.1", 3031, undefined],
+  );
+  const cfg = loadConfig(
+    { MCP_HTTP_PORT: "4000" },
+    { MCP_HTTP_SECRET: "s3cret-from-file" },
+  );
+  assert.equal(cfg.mcpHttpPort, 4000);
+  assert.equal(cfg.mcpHttpSecret, "s3cret-from-file");
 });
 
 test("fills username for get_user_info", async () => {

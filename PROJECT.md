@@ -3,9 +3,13 @@
 A read-only toolkit for one Sleeper fantasy football league. It has two parts
 that share one codebase:
 
-1. **An MCP server.** Claude Desktop starts it in the background. It gives
-   Claude 23 tools, so you can ask "who should I pick up?", "who's lucky?" or
-   "find me a trade" in a normal chat and get answers from live league data.
+1. **An MCP server** with 23 tools, so you can ask "who should I pick up?",
+   "who's lucky?" or "find me a trade" in a normal Claude chat and get answers
+   from live league data. It runs two ways:
+   - **stdio:** Claude Desktop starts it on your computer.
+   - **HTTP:** it runs on a server behind a public HTTPS address (Tailscale
+     Funnel) as a claude.ai custom connector, which also makes the tools work
+     in the Claude phone app.
 2. **A local web dashboard** (`npm run dashboard`): one page with this week's
    matchups, your roster, all-play standings, trending free agents and league
    moves. It refreshes itself during games and works on a phone.
@@ -53,8 +57,11 @@ Setup and connection steps are in [SETUP.md](SETUP.md).
 
 ```mermaid
 flowchart LR
-    CD[Claude Desktop] -- stdio JSON-RPC --> IDX[index.ts<br/>MCP server]
-    IDX --> H[handlers.ts]
+    CD[Claude Desktop] -- stdio --> IDX[index.ts<br/>stdio entry]
+    CA[claude.ai / phone app] -- HTTPS via Tailscale Funnel --> HTTP[http-server.ts<br/>/mcp/secret]
+    IDX --> MS[mcp-server.ts<br/>tool registry]
+    HTTP --> MS
+    MS --> H[handlers.ts]
     H --> DEF[defaults.ts<br/>fill username / league / season]
     H --> AN[Analysis modules<br/>all-play, free-agents, scout,<br/>trade-finder, transaction-feed]
     BR[Browser / phone] -- HTTP --> SRV[dashboard/server.ts]
@@ -68,8 +75,10 @@ flowchart LR
     SC <--> CACHE[(.cache/<br/>players, schedule)]
 ```
 
-**Two front ends, one core.** The MCP server (`src/index.ts`) and the
-dashboard (`src/dashboard/server.ts`) are thin layers. All Sleeper access goes
+**Three front ends, one core.** The stdio MCP server (`src/index.ts`), the
+HTTP MCP server (`src/http-server.ts`) and the dashboard
+(`src/dashboard/server.ts`) are thin layers. Both MCP entry points build their
+server with the same `createMcpServer()` in `src/mcp-server.ts`. All Sleeper access goes
 through `SleeperClient`, and all calculation lives in small modules made of
 pure functions that don't touch the network. That split is what makes the
 analysis testable offline and keeps the two front ends consistent.
@@ -86,12 +95,24 @@ crashing the server.
 league and user once, then calls the panel function in `dashboard/data.ts`,
 which uses the same loader and analysis modules.
 
+**Request flow (HTTP MCP).** claude.ai sends a JSON-RPC POST to
+`https://<server>.ts.net/mcp/<secret>`. Tailscale Funnel ends the HTTPS
+connection and forwards it to `127.0.0.1:3031`. `http-server.ts` checks the
+secret path with a constant-time compare (any other path is a plain 404),
+reads the body (1 MB limit), and hands it to a fresh MCP server and SDK
+`StreamableHTTPServerTransport` in **stateless** mode with JSON responses.
+There are no sessions to store, expire or leak. Each request stands alone,
+which suits a single user on a home server. The tools, defaults and caches
+are the same as in stdio mode.
+
 ## 3. Repository layout
 
 ```
 sleeper-mcp/
 ├── src/
-│   ├── index.ts              MCP server (stdio)
+│   ├── index.ts              MCP entry point: stdio (Claude Desktop)
+│   ├── http-server.ts        MCP entry point: HTTP at /mcp/<secret> (claude.ai, phone)
+│   ├── mcp-server.ts         createMcpServer(): tool registry shared by both entry points
 │   ├── tools.ts              Tool list: Zod schemas + JSON schemas for Claude
 │   ├── handlers.ts           One handler per tool
 │   ├── sleeper-client.ts     All HTTP calls, request cache, player + schedule disk cache
@@ -352,7 +373,7 @@ feed also counts moves by type and by team.
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 69 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule |
+| `test/*.test.mjs` (node:test) | 79 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out
@@ -361,7 +382,9 @@ real server on a random port with fake panels, and check headers, routing,
 error handling, path traversal and read-only behavior.
 
 For a live check of any tool:
-`npm run smoke -- <tool_name> '<json args>'`.
+`npm run smoke -- <tool_name> '<json args>'`. Add
+`--url https://<host>/mcp/<secret>` to test a deployed HTTP endpoint instead
+of starting the stdio server.
 
 ## 10. Limitations
 
@@ -377,8 +400,12 @@ For a live check of any tool:
   `compare_players` still rank by Sleeper's search rank, and
   `research_player_status` returns placeholder "web results". Take them
   lightly, or ask Claude to use the newer tools.
-- **No login on the dashboard.** It's meant for your own machine or home
-  network (see the VPN note in SETUP.md).
+- **No login on the dashboard.** It's meant for your own machine, home
+  network or Tailscale. It never goes through Funnel.
+- **The HTTP endpoint's only lock is its secret path.** claude.ai connects
+  without OAuth, so the long random `MCP_HTTP_SECRET` in the URL is the
+  protection. Anyone with the full URL can use the (read-only) tools. Change
+  the secret if it leaks.
 
 ## 11. Changes from upstream
 
@@ -389,8 +416,10 @@ For a live check of any tool:
 - Fixed: `get_waiver_suggestions` only skipped players on your own roster.
 - Added: username, league and season defaults through env or `.env`.
 - Added: request cache, season matchups loader, NFL schedule cache.
-- Added: five analysis tools, the dashboard, 69 offline tests, a smoke-test
+- Added: five analysis tools, the dashboard, 79 offline tests, a smoke-test
   script, and these docs.
+- Added: HTTP mode (MCP Streamable HTTP, stateless) for claude.ai custom
+  connectors and the phone app, after upgrading the MCP SDK from 0.4 to 1.x.
 
 ## 12. Ideas for later
 

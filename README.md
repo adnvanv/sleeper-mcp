@@ -9,7 +9,7 @@ A comprehensive Model Context Protocol (MCP) Server for integrating with Sleeper
 
 > **This fork** adds username/league defaults, five league-analysis tools (trending free agents, all-play records, opponent scout, transaction feed, trade finder), a local web dashboard, and fixes for Windows and stdio logging.
 >
-> - **[SETUP.md](SETUP.md)**: install, connect Claude Desktop, run the dashboard, deploy to Ubuntu
+> - **[SETUP.md](SETUP.md)**: install, connect Claude Desktop, run the dashboard, deploy to Ubuntu, and use the tools from the Claude phone app over Tailscale Funnel (`npm run mcp:http`)
 > - **[PROJECT.md](PROJECT.md)**: architecture, every tool, and how the analysis works
 
 ## 📦 Installation
