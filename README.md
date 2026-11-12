@@ -186,6 +186,7 @@ Start a conversation with Claude and try:
 ### Player Tools
 - `search_players` - Search players in the database
 - `get_trending_players` - Trending add/drop players
+- `get_trending_free_agents` - Trending adds nobody in your league has rostered (IR and taxi count as rostered), at positions your league starts
 - `get_player_details` - Detailed player information
 - `compare_players` - Head-to-head player comparisons
 

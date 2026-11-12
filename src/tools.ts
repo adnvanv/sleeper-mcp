@@ -84,6 +84,28 @@ export const GetTrendingPlayersSchema = z.object({
     .describe("Maximum number of results"),
 });
 
+export const GetTrendingFreeAgentsSchema = z.object({
+  league_id: z.string().describe("Sleeper league ID"),
+  position: z
+    .string()
+    .optional()
+    .describe("Only this position (QB, RB, WR, TE, K, DEF)"),
+  lookback_hours: z
+    .number()
+    .min(1)
+    .max(168)
+    .optional()
+    .default(24)
+    .describe("Hours of add activity to look back over"),
+  limit: z
+    .number()
+    .min(1)
+    .max(50)
+    .optional()
+    .default(15)
+    .describe("Maximum number of free agents to return"),
+});
+
 export const GetPlayerDetailsSchema = z.object({
   player_ids: z
     .array(z.string())
@@ -347,6 +369,39 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "get_trending_free_agents",
+    description:
+      "Find players trending as adds across Sleeper who are NOT on any roster in your league (including IR and taxi), at positions your league starts. Best answer to 'who should I pick up?'",
+    inputSchema: {
+      type: "object",
+      properties: {
+        league_id: {
+          type: "string",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
+        },
+        position: {
+          type: "string",
+          description: "Only this position (QB, RB, WR, TE, K, DEF)",
+        },
+        lookback_hours: {
+          type: "number",
+          description: "Hours of add activity to look back over",
+          minimum: 1,
+          maximum: 168,
+          default: 24,
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of free agents to return",
+          minimum: 1,
+          maximum: 50,
+          default: 15,
+        },
+      },
+    },
+  },
+  {
     name: "get_player_details",
     description:
       "Get detailed information for specific player IDs including position, team, and injury status",
@@ -530,6 +585,7 @@ export type ToolInput =
   | z.infer<typeof GetMatchupDetailsSchema>
   | z.infer<typeof SearchPlayersSchema>
   | z.infer<typeof GetTrendingPlayersSchema>
+  | z.infer<typeof GetTrendingFreeAgentsSchema>
   | z.infer<typeof GetPlayerDetailsSchema>
   | z.infer<typeof ResearchPlayerStatusSchema>
   | z.infer<typeof AnalyzeLineupSchema>

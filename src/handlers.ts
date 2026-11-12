@@ -1,5 +1,6 @@
 import { sleeperClient } from "./sleeper-client.js";
 import { defaultsResolver } from "./defaults.js";
+import { findTrendingFreeAgents, getRosteredPlayerIds } from "./free-agents.js";
 import {
   GetUserInfoSchema,
   GetUserLeaguesSchema,
@@ -10,6 +11,7 @@ import {
   GetMatchupDetailsSchema,
   SearchPlayersSchema,
   GetTrendingPlayersSchema,
+  GetTrendingFreeAgentsSchema,
   GetPlayerDetailsSchema,
   ResearchPlayerStatusSchema,
   AnalyzeLineupSchema,
@@ -67,6 +69,9 @@ export async function handleToolCall(name: string, rawArgs: any) {
 
       case "get_trending_players":
         return handleGetTrendingPlayers(args);
+
+      case "get_trending_free_agents":
+        return handleGetTrendingFreeAgents(args);
 
       case "get_player_details":
         return handleGetPlayerDetails(args);
@@ -330,6 +335,38 @@ async function handleGetTrendingPlayers(args: any) {
   };
 }
 
+async function handleGetTrendingFreeAgents(args: any) {
+  const { league_id, position, lookback_hours, limit } =
+    GetTrendingFreeAgentsSchema.parse(args);
+
+  // Pull a wide trending pool, since many top adds are already rostered.
+  const [trending, rosters, league, players] = await Promise.all([
+    sleeperClient.getTrendingPlayers("add", lookback_hours, 100),
+    sleeperClient.getLeagueRosters(league_id),
+    sleeperClient.getLeague(league_id),
+    sleeperClient.getAllPlayers(),
+  ]);
+
+  const { free_agents, rostered_skipped } = findTrendingFreeAgents(
+    trending,
+    rosters,
+    players,
+    { position, limit, rosterPositions: league.roster_positions },
+  );
+
+  return {
+    league: league.name,
+    free_agents,
+    count: free_agents.length,
+    trending_checked: trending.length,
+    already_rostered_in_league: rostered_skipped,
+    position_filter: position || null,
+    lookback_hours,
+    success: true,
+    message: `Found ${free_agents.length} trending free agents${position ? ` at ${position.toUpperCase()}` : ""} in ${league.name} (${rostered_skipped} of the top ${trending.length} trending adds are already rostered)`,
+  };
+}
+
 async function handleGetPlayerDetails(args: any) {
   const { player_ids } = GetPlayerDetailsSchema.parse(args);
 
@@ -464,13 +501,15 @@ async function handleGetWaiverSuggestions(args: any) {
   // Get trending players
   const trendingAdds = await sleeperClient.getTrendingPlayers("add", 24, 50);
 
-  // Get user's roster to see current players
-  const roster = await sleeperClient.findUserRosterInLeague(league_id, user_id);
-  const userPlayerIds = new Set(roster?.players || []);
+  // Skip anyone on any roster in the league, not just the user's
+  const rosters = await sleeperClient.getLeagueRosters(league_id);
+  if (!rosters.some((r) => r.owner_id === user_id)) {
+    return { error: "User not found in this league", success: false };
+  }
+  const rosteredIds = getRosteredPlayerIds(rosters);
 
-  // Filter trending players not on user's roster
   const availableTrending = trendingAdds.filter(
-    (t) => !userPlayerIds.has(t.player_id),
+    (t) => !rosteredIds.has(t.player_id),
   );
 
   // Get player details for trending players

@@ -21,6 +21,7 @@ const LEAGUE_ID_TOOLS = new Set([
   "get_waiver_suggestions",
   "get_transactions",
   "get_start_sit_advice",
+  "get_trending_free_agents",
 ]);
 
 const SEASON_TOOLS = new Set(["get_user_leagues"]);
