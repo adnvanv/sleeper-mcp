@@ -187,6 +187,7 @@ Start a conversation with Claude and try:
 - `search_players` - Search players in the database
 - `get_trending_players` - Trending add/drop players
 - `get_trending_free_agents` - Trending adds nobody in your league has rostered (IR and taxi count as rostered), at positions your league starts
+- `get_all_play_records` - Each team's all-play record (vs. every team, every week) next to its actual record, with expected wins and a luck score
 - `get_player_details` - Detailed player information
 - `compare_players` - Head-to-head player comparisons
 

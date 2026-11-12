@@ -1,6 +1,7 @@
 import { sleeperClient } from "./sleeper-client.js";
 import { defaultsResolver } from "./defaults.js";
 import { findTrendingFreeAgents, getRosteredPlayerIds } from "./free-agents.js";
+import { computeAllPlay, playedWeeks, resolveThroughWeek } from "./all-play.js";
 import {
   GetUserInfoSchema,
   GetUserLeaguesSchema,
@@ -12,6 +13,7 @@ import {
   SearchPlayersSchema,
   GetTrendingPlayersSchema,
   GetTrendingFreeAgentsSchema,
+  GetAllPlayRecordsSchema,
   GetPlayerDetailsSchema,
   ResearchPlayerStatusSchema,
   AnalyzeLineupSchema,
@@ -72,6 +74,9 @@ export async function handleToolCall(name: string, rawArgs: any) {
 
       case "get_trending_free_agents":
         return handleGetTrendingFreeAgents(args);
+
+      case "get_all_play_records":
+        return handleGetAllPlayRecords(args);
 
       case "get_player_details":
         return handleGetPlayerDetails(args);
@@ -364,6 +369,54 @@ async function handleGetTrendingFreeAgents(args: any) {
     lookback_hours,
     success: true,
     message: `Found ${free_agents.length} trending free agents${position ? ` at ${position.toUpperCase()}` : ""} in ${league.name} (${rostered_skipped} of the top ${trending.length} trending adds are already rostered)`,
+  };
+}
+
+async function handleGetAllPlayRecords(args: any) {
+  const { league_id, through_week } = GetAllPlayRecordsSchema.parse(args);
+
+  const [league, rosters, users, nflState] = await Promise.all([
+    sleeperClient.getLeague(league_id),
+    sleeperClient.getLeagueRosters(league_id),
+    sleeperClient.getLeagueUsers(league_id),
+    sleeperClient.getNFLState(),
+  ]);
+
+  const startWeek = league.settings.start_week || 1;
+  const lastWeek = resolveThroughWeek({
+    requested: through_week,
+    lastScoredWeek: league.settings.last_scored_leg,
+    currentWeek: nflState.week,
+    playoffWeekStart: league.settings.playoff_week_start,
+  });
+
+  const weekNumbers: number[] = [];
+  for (let w = startWeek; w <= lastWeek; w++) weekNumbers.push(w);
+  const weeks = await Promise.all(
+    weekNumbers.map(async (week) => ({
+      week,
+      matchups: await sleeperClient.getMatchups(league_id, week),
+    })),
+  );
+  const counted = playedWeeks(weeks).map((w) => w.week);
+
+  const medianGame = league.settings.league_average_match === 1;
+  const myUserId = await defaultsResolver
+    .resolveUserId()
+    .catch(() => undefined);
+  const standings = computeAllPlay(weeks, rosters, users, { medianGame }).map(
+    (r) => ({ ...r, is_you: r.owner_id === myUserId }),
+  );
+
+  return {
+    league: league.name,
+    weeks_counted: counted,
+    median_game: medianGame,
+    standings,
+    success: true,
+    message: counted.length
+      ? `All-play standings for ${league.name}, weeks ${counted[0]}-${counted[counted.length - 1]}`
+      : `No scored weeks yet for ${league.name}`,
   };
 }
 

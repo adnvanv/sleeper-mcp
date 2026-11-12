@@ -22,6 +22,8 @@ export interface SleeperLeague {
     playoff_seed_type?: number;
     league_average_match?: number;
     leg?: number;
+    last_scored_leg?: number;
+    start_week?: number;
     trade_deadline?: number;
     reserve_allow_cov?: number;
     reserve_slots?: number;

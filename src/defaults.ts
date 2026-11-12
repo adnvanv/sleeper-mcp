@@ -22,6 +22,7 @@ const LEAGUE_ID_TOOLS = new Set([
   "get_transactions",
   "get_start_sit_advice",
   "get_trending_free_agents",
+  "get_all_play_records",
 ]);
 
 const SEASON_TOOLS = new Set(["get_user_leagues"]);

@@ -106,6 +106,18 @@ export const GetTrendingFreeAgentsSchema = z.object({
     .describe("Maximum number of free agents to return"),
 });
 
+export const GetAllPlayRecordsSchema = z.object({
+  league_id: z.string().describe("Sleeper league ID"),
+  through_week: z
+    .number()
+    .min(1)
+    .max(18)
+    .optional()
+    .describe(
+      "Last week to include (defaults to the last fully scored regular-season week)",
+    ),
+});
+
 export const GetPlayerDetailsSchema = z.object({
   player_ids: z
     .array(z.string())
@@ -402,6 +414,28 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "get_all_play_records",
+    description:
+      "Standings with each team's all-play record (as if it played every other team every week) next to its actual record, expected wins, and a luck score (actual head-to-head wins minus expected). Shows which teams are good versus lucky.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        league_id: {
+          type: "string",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
+        },
+        through_week: {
+          type: "number",
+          description:
+            "Last week to include (defaults to the last fully scored regular-season week)",
+          minimum: 1,
+          maximum: 18,
+        },
+      },
+    },
+  },
+  {
     name: "get_player_details",
     description:
       "Get detailed information for specific player IDs including position, team, and injury status",
@@ -586,6 +620,7 @@ export type ToolInput =
   | z.infer<typeof SearchPlayersSchema>
   | z.infer<typeof GetTrendingPlayersSchema>
   | z.infer<typeof GetTrendingFreeAgentsSchema>
+  | z.infer<typeof GetAllPlayRecordsSchema>
   | z.infer<typeof GetPlayerDetailsSchema>
   | z.infer<typeof ResearchPlayerStatusSchema>
   | z.infer<typeof AnalyzeLineupSchema>
