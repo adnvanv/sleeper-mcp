@@ -8,7 +8,10 @@ export const GetUserInfoSchema = z.object({
 
 export const GetUserLeaguesSchema = z.object({
   user_id: z.string().describe("Sleeper user ID"),
-  season: z.string().optional().default("2024").describe("NFL season year"),
+  season: z
+    .string()
+    .optional()
+    .describe("NFL season year (defaults to current season)"),
   sport: z
     .string()
     .optional()
@@ -163,10 +166,10 @@ export const tools: Tool[] = [
       properties: {
         username_or_id: {
           type: "string",
-          description: "Sleeper username or user ID",
+          description:
+            "Sleeper username or user ID (optional; defaults to SLEEPER_USERNAME)",
         },
       },
-      required: ["username_or_id"],
     },
   },
   {
@@ -177,12 +180,12 @@ export const tools: Tool[] = [
       properties: {
         user_id: {
           type: "string",
-          description: "Sleeper user ID",
+          description:
+            "Sleeper user ID or username (optional; defaults to SLEEPER_USERNAME)",
         },
         season: {
           type: "string",
-          description: "NFL season year",
-          default: "2024",
+          description: "NFL season year (defaults to current season)",
         },
         sport: {
           type: "string",
@@ -190,7 +193,6 @@ export const tools: Tool[] = [
           default: "nfl",
         },
       },
-      required: ["user_id"],
     },
   },
   {
@@ -202,10 +204,10 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
       },
-      required: ["league_id"],
     },
   },
   {
@@ -217,7 +219,8 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         include_player_details: {
           type: "boolean",
@@ -225,7 +228,6 @@ export const tools: Tool[] = [
           default: true,
         },
       },
-      required: ["league_id"],
     },
   },
   {
@@ -237,10 +239,10 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
       },
-      required: ["league_id"],
     },
   },
   {
@@ -252,14 +254,14 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         week: {
           type: "number",
           description: "NFL week number (if not provided, uses current week)",
         },
       },
-      required: ["league_id"],
     },
   },
   {
@@ -271,18 +273,19 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         user_id: {
           type: "string",
-          description: "User ID to get matchup for",
+          description:
+            "User ID to get matchup for or username (optional; defaults to SLEEPER_USERNAME)",
         },
         week: {
           type: "number",
           description: "NFL week number (if not provided, uses current week)",
         },
       },
-      required: ["league_id", "user_id"],
     },
   },
   {
@@ -389,18 +392,19 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         user_id: {
           type: "string",
-          description: "User ID whose lineup to analyze",
+          description:
+            "User ID whose lineup to analyze or username (optional; defaults to SLEEPER_USERNAME)",
         },
         week: {
           type: "number",
           description: "Week to analyze (current week if not specified)",
         },
       },
-      required: ["league_id", "user_id"],
     },
   },
   {
@@ -412,18 +416,19 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         user_id: {
           type: "string",
-          description: "User ID to get suggestions for",
+          description:
+            "User ID to get suggestions for or username (optional; defaults to SLEEPER_USERNAME)",
         },
         position: {
           type: "string",
           description: "Specific position to focus on (QB, RB, WR, TE, K, DEF)",
         },
       },
-      required: ["league_id", "user_id"],
     },
   },
   {
@@ -435,7 +440,8 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         week: {
           type: "number",
@@ -443,7 +449,6 @@ export const tools: Tool[] = [
             "Week to get transactions for (current week if not specified)",
         },
       },
-      required: ["league_id"],
     },
   },
   {
@@ -479,11 +484,13 @@ export const tools: Tool[] = [
       properties: {
         league_id: {
           type: "string",
-          description: "Sleeper league ID",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
         },
         user_id: {
           type: "string",
-          description: "User ID to get advice for",
+          description:
+            "User ID to get advice for or username (optional; defaults to SLEEPER_USERNAME)",
         },
         position: {
           type: "string",
@@ -494,7 +501,6 @@ export const tools: Tool[] = [
           description: "Week to analyze (current week if not specified)",
         },
       },
-      required: ["league_id", "user_id"],
     },
   },
   {

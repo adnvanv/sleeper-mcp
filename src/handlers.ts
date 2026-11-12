@@ -1,4 +1,5 @@
 import { sleeperClient } from "./sleeper-client.js";
+import { defaultsResolver } from "./defaults.js";
 import {
   GetUserInfoSchema,
   GetUserLeaguesSchema,
@@ -33,8 +34,9 @@ async function performWebSearch(query: string): Promise<string[]> {
   return searchResults;
 }
 
-export async function handleToolCall(name: string, args: any) {
+export async function handleToolCall(name: string, rawArgs: any) {
   try {
+    const args = await defaultsResolver.apply(name, rawArgs || {});
     switch (name) {
       case "get_user_info":
         return handleGetUserInfo(args);

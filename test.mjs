@@ -6,7 +6,7 @@
  */
 
 import { spawn } from "child_process";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { dirname, join } from "path";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -612,7 +612,7 @@ class MCPServerTester {
 }
 
 // Run tests if this script is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const tester = new MCPServerTester();
   tester.runAllTests().catch((error) => {
     console.error("\n💥 Test runner failed:", error.message);

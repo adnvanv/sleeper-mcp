@@ -101,10 +101,14 @@ npm run build
 }
 ```
 
+#### Defaults (optional)
+Set `SLEEPER_USERNAME` and, optionally, `SLEEPER_LEAGUE_ID` in the `env` block above or in a gitignored `.env` file (see `.env.example`). Tools then fill in `username_or_id`, `user_id`, `league_id`, and `season` when you leave them out. Without `SLEEPER_LEAGUE_ID`, your only league this season is used. A non-numeric `user_id` is looked up as a username.
+
 ### 3. Test
 ```bash
-npm test
+npm test               # Offline unit tests, then MCP protocol tests
 npm run test:coverage  # Show detailed code coverage
+npm run smoke -- get_league_info '{}'   # Call one tool against the live API
 ```
 
 ## 🧪 Test Coverage
