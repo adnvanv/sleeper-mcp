@@ -1,346 +1,256 @@
-# Sleeper MCP Server - Setup Guide
+# Setup Guide
 
-A comprehensive setup guide for the Sleeper Fantasy Football MCP Server.
+How to install the Sleeper MCP server, connect it to Claude Desktop, and run
+the web dashboard: on Windows first, then on an Ubuntu home server so you can
+open the dashboard from your phone.
 
-## Overview
+For what the project does and how it works, see [PROJECT.md](PROJECT.md).
 
-This MCP Server enables AI assistants like Claude to retrieve and analyze fantasy football data from Sleeper. The server provides comprehensive tools for league management, player analysis, and strategic recommendations.
+---
 
-## Prerequisites
+## 1. Requirements
 
-- **Node.js**: Version 18 or higher
-- **npm**: Comes with Node.js
-- **Claude Desktop** or other MCP-compatible client
+| Tool | Version | Check |
+| --- | --- | --- |
+| Node.js | 22 or newer | `node --version` |
+| npm | comes with Node | `npm --version` |
+| git | any recent | `git --version` |
+| Claude Desktop | current | only needed for the MCP part |
 
-### Check Node.js Installation
+No Sleeper API key is needed. The Sleeper API is public and read-only.
 
-```bash
-node --version  # should show v18+
-npm --version   # should be available
-```
-
-## Installation
-
-### 1. Repository Setup
+## 2. Get the code and build it
 
 ```bash
-# Clone or create the project directory
-cd /path/to/your/projects
-git clone <repository-url> sleeper-mcp  # or copy the files
+git clone https://github.com/adnvanv/sleeper-mcp.git
 cd sleeper-mcp
-```
-
-### 2. Install Dependencies
-
-```bash
 npm install
-```
-
-### 3. Build the Server
-
-```bash
 npm run build
 ```
 
-### 4. Run Tests (Optional)
+`npm run build` compiles TypeScript from `src/` into `dist/`. Run it again
+after pulling changes.
+
+## 3. Set your defaults
+
+Copy the example file and fill in your username:
 
 ```bash
-npm test
+cp .env.example .env
 ```
 
-## Claude Desktop Configuration
+```ini
+SLEEPER_USERNAME=your_sleeper_username
+# Optional. If you're in exactly one league this season it's found for you.
+SLEEPER_LEAGUE_ID=
+```
 
-### 1. Find Configuration File
+`.env` is gitignored. Real environment variables (for example in the Claude
+Desktop config below) take priority over `.env`.
 
-**macOS:**
+To find a league ID, run:
+
 ```bash
-~/Library/Application Support/Claude/claude_desktop_config.json
+npm run smoke -- get_user_leagues '{}'
 ```
 
-**Windows:**
+## 4. Check it works
+
 ```bash
-%APPDATA%\Claude\claude_desktop_config.json
+npm test                                   # builds, then 82 tests
+npm run smoke                              # lists tools, prints NFL state
+npm run smoke -- get_all_play_records '{}' # calls one tool against live data
 ```
 
-**Linux:**
-```bash
-~/.config/Claude/claude_desktop_config.json
-```
+The unit tests run offline. The protocol tests and `npm run smoke` call the
+live Sleeper API.
 
-### 2. Add MCP Server
+## 5. Connect Claude Desktop
 
-Edit `claude_desktop_config.json` and add:
+### Find the config file
+
+Where Claude Desktop keeps `claude_desktop_config.json` depends on how it was
+installed:
+
+| Install | Path |
+| --- | --- |
+| Microsoft Store (MSIX) | `%LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json` |
+| Standard Windows installer | `%APPDATA%\Claude\claude_desktop_config.json` |
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+
+Claude Desktop also opens the file for you: **Settings → Developer → Edit
+Config**. That's the surest way to get the right one.
+
+### Add the server
+
+Back up the file first. Then add a `sleeper` entry under `mcpServers`,
+merging with anything already there. Use absolute paths and double the
+backslashes on Windows:
 
 ```json
 {
   "mcpServers": {
-    "sleeper-mcp": {
-      "command": "node",
-      "args": ["/FULL/PATH/TO/sleeper-mcp/dist/index.js"],
-      "env": {}
-    }
-  }
-}
-```
-
-**Important:** Replace `/FULL/PATH/TO/sleeper-mcp` with the actual path to your project.
-
-### 3. Determine Correct Path
-
-```bash
-# In the sleeper-mcp directory:
-pwd
-# Output example: /Users/username/projects/sleeper-mcp
-
-# The correct path would then be:
-# /Users/username/projects/sleeper-mcp/dist/index.js
-```
-
-### Example Configuration (Complete)
-
-```json
-{
-  "mcpServers": {
-    "sleeper-mcp": {
-      "command": "node",
-      "args": ["/Users/john/projects/sleeper-mcp/dist/index.js"],
-      "env": {}
-    },
-    "other-server": {
-      "command": "python",
-      "args": ["/path/to/other-server.py"]
-    }
-  }
-}
-```
-
-## Getting Started
-
-### 1. Restart Claude Desktop
-
-After configuration, Claude Desktop must be completely closed and reopened.
-
-### 2. Test Connection
-
-Start a new conversation in Claude and test:
-
-```
-Can you show me which Sleeper tools are available?
-```
-
-Claude should display a list of available tools.
-
-### 3. Perform First API Test
-
-```
-Can you get the current NFL status?
-```
-
-## Common Usage Scenarios
-
-### League Setup
-
-```
-My Sleeper username is "your_username". 
-Can you retrieve my leagues for 2024?
-```
-
-### Lineup Analysis
-
-```
-Analyze my lineup for this week in league [league_id]. 
-My user ID is [user_id].
-```
-
-### Injury Research
-
-```
-Check the status of Christian McCaffrey. 
-Is he ready to play this week?
-```
-
-### Waiver Wire
-
-```
-Show me the best available RBs on the waiver wire 
-based on current trends.
-```
-
-## Troubleshooting
-
-### Server Won't Start
-
-1. **Check Path:**
-   ```bash
-   ls -la /path/to/sleeper-mcp/dist/index.js
-   ```
-
-2. **Node.js Version:**
-   ```bash
-   node --version  # must be v18+
-   ```
-
-3. **Build Status:**
-   ```bash
-   cd /path/to/sleeper-mcp
-   npm run build
-   ```
-
-### Claude Doesn't Recognize Server
-
-1. **Check Configuration:**
-   - Is the JSON syntax correct?
-   - Is the path absolute and correct?
-   - Was Claude Desktop restarted?
-
-2. **Check Logs:**
-   ```bash
-   # Test server manually:
-   cd /path/to/sleeper-mcp
-   node dist/index.js
-   ```
-
-### API Errors
-
-1. **Rate Limiting:**
-   - Sleeper allows max 1000 requests/minute
-   - Wait briefly on 429 errors
-
-2. **Network Issues:**
-   - Check internet connection
-   - Verify firewall/proxy settings
-
-3. **Invalid IDs:**
-   - User IDs and league IDs must be correct
-   - Usernames can change, IDs remain constant
-
-### Performance Issues
-
-1. **Player Cache:**
-   - Player data is cached for 24h
-   - First queries may take longer
-
-2. **Parallel Requests:**
-   - Server limits concurrent API calls
-   - Be patient with multiple queries
-
-## Maintenance
-
-### Install Updates
-
-```bash
-cd /path/to/sleeper-mcp
-git pull  # if using git repository
-npm install  # new dependencies
-npm run build  # rebuild
-```
-
-### Check Logs
-
-Find Claude Desktop logs:
-- **macOS:** `~/Library/Logs/Claude/`
-- **Windows:** `%USERPROFILE%\AppData\Local\Claude\logs\`
-
-### Clear Cache
-
-```bash
-# Player cache automatically refreshes after 24h
-# Manual reset by restarting server
-```
-
-## Advanced Configuration
-
-### Environment Variables (Optional)
-
-```json
-{
-  "mcpServers": {
-    "sleeper-mcp": {
-      "command": "node",
-      "args": ["/path/to/sleeper-mcp/dist/index.js"],
+    "sleeper": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\path\\to\\sleeper-mcp\\dist\\index.js"],
       "env": {
-        "DEBUG": "true",
-        "CACHE_DURATION": "86400"
+        "SLEEPER_USERNAME": "your_sleeper_username",
+        "SLEEPER_LEAGUE_ID": "your_league_id"
       }
     }
   }
 }
 ```
 
-### Multiple Instances
+- `command` can be just `"node"` if Node is on your PATH. The full path to
+  `node.exe` avoids PATH problems.
+- `env` is optional if you set up `.env`. The server reads `.env` from the
+  repo folder no matter where Claude Desktop starts it.
+- Keep every other key in the file (`preferences` and so on) as it is.
 
-```json
-{
-  "mcpServers": {
-    "sleeper-mcp-main": {
-      "command": "node",
-      "args": ["/path/to/sleeper-mcp/dist/index.js"]
-    },
-    "sleeper-mcp-backup": {
-      "command": "node", 
-      "args": ["/path/to/sleeper-mcp-backup/dist/index.js"]
-    }
-  }
-}
-```
+### Restart Claude Desktop fully
 
-## Security
+Closing the window isn't enough. Right-click the Claude icon in the system
+tray (bottom-right, near the clock) and choose **Quit**, then reopen it.
 
-### Privacy
+In a new chat, the tools menu (the slider icon in the message box) should now
+list **sleeper** with 23 tools.
 
-- Server makes only READ-only API calls
-- No personal data is stored
-- All data comes directly from Sleeper's public API
+### Try it
 
-### API Limits
+- "Who should I pick up this week?"
+- "Who's been the luckiest team in my league?"
+- "Scout my opponent this week."
+- "Find me a trade for a tight end."
+- "What moves has my league made since week 7?"
 
-- Respects Sleeper's rate limits
-- Automatic error handling on limit exceeded
-- No API keys required
+### If the tools don't appear
 
-## Support & Development
+1. Check the JSON is valid (a missing comma breaks the whole file).
+2. Check the path in `args` exists, and that you ran `npm run build`.
+3. Read the server log, `mcp-server-sleeper.log`. It's in
+   `%LOCALAPPDATA%\Claude-Data\claude_<id>\logs\` for Store installs, or
+   `%APPDATA%\Claude\logs\` for the standard installer. Claude Desktop's
+   Developer settings also link to it.
+4. Claude Desktop rewrites its config while running. If your edit vanished,
+   quit Claude Desktop first, edit, then reopen.
 
-### Reporting Issues
-
-When reporting problems, please gather:
-
-1. **System Info:**
-   - Operating system
-   - Node.js version
-   - Claude Desktop version
-
-2. **Error Details:**
-   - Exact error message
-   - Steps to reproduce
-   - Relevant logs
-
-3. **Configuration:**
-   - `claude_desktop_config.json` (without sensitive data)
-   - Used tool names and parameters
-
-### Feature Requests
-
-The server can be extended with:
-- Additional Sleeper API endpoints
-- Enhanced analysis and recommendations
-- Integration with other fantasy platforms
-- Historical data analysis
-
-### Development
+## 6. Run the dashboard
 
 ```bash
-# Development Mode
-npm run dev
-
-# Watch Mode (automatic rebuilding)
-npm run watch
-
-# Code Style Check
-npm run lint  # if configured
+npm run dashboard
 ```
 
-## Conclusion
+Then open **http://localhost:3030**. The command builds first, then starts
+the server. Stop it with `Ctrl+C`.
 
-With this setup, you have a fully functional Sleeper MCP Server that enables Claude to perform comprehensive fantasy football analysis. The server provides over 15 different tools for everything from league management to strategic recommendations.
+The dashboard needs `SLEEPER_USERNAME` (from `.env` or the environment). It
+shows:
 
-**Good luck dominating your fantasy league! 🏆**
+- **This week**: every matchup with live scores and how many starters have
+  yet to play. Yours is pinned and highlighted.
+- **My roster**: starters, bench, IR and taxi, with injury and bye badges, this
+  week's points, season points per game, and warnings for an empty, injured or
+  bye-week starter.
+- **Standings**: actual record next to the all-play record, luck, and points
+  for. Click a column header to sort.
+- **Trending free agents**: the most-added players nobody in your league has.
+- **Recent moves**: trades, waiver claims (with FAAB bids) and free-agent
+  moves from the last three weeks, with filters.
+
+It refreshes every 2 minutes during NFL game windows (Thursday night, Sunday,
+Monday night, and Saturdays from mid-December) and every 15 minutes otherwise.
+There's also a Refresh button. The **Theme** button switches between auto,
+light and dark.
+
+### Change the port or host
+
+```bash
+# Windows PowerShell
+$env:DASHBOARD_PORT = "8080"; npm run dashboard
+
+# macOS / Linux
+DASHBOARD_PORT=8080 npm run dashboard
+```
+
+Or set `DASHBOARD_HOST` / `DASHBOARD_PORT` in `.env`. The default host,
+`127.0.0.1`, only accepts connections from the same computer. Use `0.0.0.0` to
+reach it from other devices on your network.
+
+## 7. Run the dashboard on an Ubuntu home server
+
+### Install
+
+```bash
+# Node 22 LTS from NodeSource
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs git
+
+git clone https://github.com/adnvanv/sleeper-mcp.git ~/sleeper-mcp
+cd ~/sleeper-mcp
+npm install
+npm run build
+cp .env.example .env
+nano .env   # set SLEEPER_USERNAME, SLEEPER_LEAGUE_ID, DASHBOARD_HOST=0.0.0.0
+```
+
+### Keep it running with systemd
+
+Create `/etc/systemd/system/sleeper-dashboard.service`, replacing `youruser`:
+
+```ini
+[Unit]
+Description=Sleeper fantasy dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=youruser
+WorkingDirectory=/home/youruser/sleeper-mcp
+ExecStart=/usr/bin/node dist/dashboard/server.js
+Restart=on-failure
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now sleeper-dashboard
+systemctl status sleeper-dashboard       # should say "active (running)"
+journalctl -u sleeper-dashboard -f       # live logs
+```
+
+The service runs `dist/` directly, so after `git pull`, run `npm run build` and
+`sudo systemctl restart sleeper-dashboard`.
+
+### Open it from your phone
+
+1. Find the server's address: `hostname -I` (for example `192.168.1.50`).
+2. If the firewall is on: `sudo ufw allow from 192.168.0.0/16 to any port 3030`.
+3. On your phone, on the same Wi-Fi, open `http://192.168.1.50:3030`.
+
+To reach it away from home, put it behind a private VPN such as Tailscale or
+WireGuard rather than forwarding the port on your router. The dashboard has no
+login. It only shows public league data, but there's no reason to expose it to
+the internet.
+
+## 8. Updating
+
+```bash
+git pull
+npm install
+npm run build
+```
+
+Then restart Claude Desktop (fully, from the tray) and/or the dashboard.
+
+## 9. Housekeeping
+
+- The player database (about 19 MB) is cached in `.cache/` and refreshed once
+  a day, as Sleeper asks. The NFL schedule is cached there too. Deleting
+  `.cache/` is always safe.
+- The `clear_cache` tool (ask Claude to "clear the player cache") forces a
+  fresh download.
+- Everything is read-only. Nothing here can change your team.

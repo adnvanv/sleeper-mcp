@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type {
+  NFLGame,
   SleeperUser,
   SleeperLeague,
   SleeperRoster,
@@ -17,6 +18,14 @@ import type {
 } from "./types.js";
 
 const BASE_URL = "https://api.sleeper.app/v1";
+// Undocumented but public: the NFL schedule Sleeper's own app uses.
+const SCHEDULE_URL = "https://api.sleeper.app/schedule/nfl/regular";
+
+// Short in-memory cache so bursts of identical requests (e.g. dashboard
+// panels loading in parallel) share one network call.
+const DEFAULT_TTL_MS = 30 * 1000;
+const PAST_WEEK_TTL_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Get the directory where this module is located
 const __filename = fileURLToPath(import.meta.url);
@@ -30,9 +39,39 @@ export class SleeperClient {
   private playersLastUpdated: number = 0;
   private readonly PLAYERS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
   private cacheInitialized: boolean = false;
+  private responseCache = new Map<
+    string,
+    { expires: number; value: Promise<unknown> }
+  >();
 
-  private async fetch<T>(endpoint: string): Promise<T> {
-    const response = await fetch(`${BASE_URL}${endpoint}`);
+  private async fetch<T>(
+    endpoint: string,
+    ttlMs: number = DEFAULT_TTL_MS,
+  ): Promise<T> {
+    const url = endpoint.startsWith("http")
+      ? endpoint
+      : `${BASE_URL}${endpoint}`;
+    const now = Date.now();
+    const hit = this.responseCache.get(url);
+    if (ttlMs > 0 && hit && hit.expires > now) return hit.value as Promise<T>;
+
+    const value = this.fetchUncached<T>(url, endpoint);
+    if (ttlMs > 0) {
+      if (this.responseCache.size > 500) this.pruneResponseCache(now);
+      this.responseCache.set(url, { expires: now + ttlMs, value });
+      value.catch(() => this.responseCache.delete(url));
+    }
+    return value;
+  }
+
+  private pruneResponseCache(now: number): void {
+    for (const [key, entry] of this.responseCache) {
+      if (entry.expires <= now) this.responseCache.delete(key);
+    }
+  }
+
+  private async fetchUncached<T>(url: string, endpoint: string): Promise<T> {
+    const response = await fetch(url);
 
     if (!response.ok) {
       if (response.status === 404) {
@@ -89,8 +128,77 @@ export class SleeperClient {
     return this.fetch<SleeperLeagueUser[]>(`/league/${leagueId}/users`);
   }
 
-  async getMatchups(leagueId: string, week: number): Promise<SleeperMatchup[]> {
-    return this.fetch<SleeperMatchup[]>(`/league/${leagueId}/matchups/${week}`);
+  async getMatchups(
+    leagueId: string,
+    week: number,
+    ttlMs: number = DEFAULT_TTL_MS,
+  ): Promise<SleeperMatchup[]> {
+    return this.fetch<SleeperMatchup[]>(
+      `/league/${leagueId}/matchups/${week}`,
+      ttlMs,
+    );
+  }
+
+  /**
+   * Matchups for weeks fromWeek..toWeek. Weeks before currentWeek are final,
+   * so they are cached for an hour; the current week only briefly.
+   */
+  async getSeasonMatchups(
+    leagueId: string,
+    fromWeek: number,
+    toWeek: number,
+    currentWeek: number,
+  ): Promise<{ week: number; matchups: SleeperMatchup[] }[]> {
+    const weeks: number[] = [];
+    for (let w = fromWeek; w <= toWeek; w++) weeks.push(w);
+    return Promise.all(
+      weeks.map(async (week) => ({
+        week,
+        matchups:
+          (await this.getMatchups(
+            leagueId,
+            week,
+            week < currentWeek ? PAST_WEEK_TTL_MS : DEFAULT_TTL_MS,
+          )) || [],
+      })),
+    );
+  }
+
+  /**
+   * Regular-season NFL schedule, cached on disk (a day by default; pass a
+   * shorter maxAgeMs when live game status matters). Returns [] if the
+   * endpoint is unavailable, so callers treat bye info as optional.
+   */
+  async getSchedule(
+    season: string,
+    maxAgeMs: number = DAY_MS,
+  ): Promise<NFLGame[]> {
+    const file = join(CACHE_DIR, `schedule-${season}.json`);
+    try {
+      const stat = await fs.stat(file);
+      if (Date.now() - stat.mtimeMs < maxAgeMs) {
+        return JSON.parse(await fs.readFile(file, "utf-8"));
+      }
+    } catch {
+      // no cache yet
+    }
+    try {
+      const games = await this.fetch<NFLGame[]>(
+        `${SCHEDULE_URL}/${season}`,
+        maxAgeMs,
+      );
+      if (Array.isArray(games)) {
+        await this.ensureCacheDir();
+        await fs.writeFile(file, JSON.stringify(games));
+        return games;
+      }
+    } catch (error) {
+      console.error(
+        "Schedule unavailable:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+    return [];
   }
 
   async getTransactions(
@@ -166,6 +274,7 @@ export class SleeperClient {
     );
     const playersData = await this.fetch<Record<string, SleeperPlayer>>(
       `/players/${sport}`,
+      0,
     );
 
     this.players.clear();
@@ -337,6 +446,7 @@ export class SleeperClient {
 
     return this.fetch<SleeperTrendingPlayer[]>(
       `/players/nfl/trending/${type}?${params}`,
+      5 * 60 * 1000,
     );
   }
 

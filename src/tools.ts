@@ -118,6 +118,54 @@ export const GetAllPlayRecordsSchema = z.object({
     ),
 });
 
+export const GetOpponentScoutSchema = z.object({
+  league_id: z.string().describe("Sleeper league ID"),
+  user_id: z.string().describe("Your user ID or username"),
+  week: z
+    .number()
+    .min(1)
+    .max(18)
+    .optional()
+    .describe("Week to scout (current week if not specified)"),
+});
+
+export const GetTransactionFeedSchema = z.object({
+  league_id: z.string().describe("Sleeper league ID"),
+  since_week: z
+    .number()
+    .min(1)
+    .max(18)
+    .optional()
+    .describe("First week to include (defaults to two weeks ago)"),
+  type: z
+    .enum(["trade", "waiver", "free_agent"])
+    .optional()
+    .describe("Only this kind of move"),
+  limit: z
+    .number()
+    .min(1)
+    .max(200)
+    .optional()
+    .default(50)
+    .describe("Maximum number of moves to return"),
+});
+
+export const FindTradePartnersSchema = z.object({
+  league_id: z.string().describe("Sleeper league ID"),
+  user_id: z.string().describe("Your user ID or username"),
+  target_position: z
+    .string()
+    .optional()
+    .describe("Only trades where you receive this position (QB, RB, WR, TE)"),
+  limit: z
+    .number()
+    .min(1)
+    .max(25)
+    .optional()
+    .default(10)
+    .describe("Maximum number of trade ideas"),
+});
+
 export const GetPlayerDetailsSchema = z.object({
   player_ids: z
     .array(z.string())
@@ -436,6 +484,97 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "get_opponent_scout",
+    description:
+      "Scout this week's opponent: their starting lineup with live points, injury and bye flags, empty slots, weak and strong lineup slots versus league averages, bench depth, and their recent adds/drops/trades.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        league_id: {
+          type: "string",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
+        },
+        user_id: {
+          type: "string",
+          description:
+            "Your user ID or username (optional; defaults to SLEEPER_USERNAME)",
+        },
+        week: {
+          type: "number",
+          description: "Week to scout (current week if not specified)",
+          minimum: 1,
+          maximum: 18,
+        },
+      },
+    },
+  },
+  {
+    name: "get_transaction_feed",
+    description:
+      "Readable feed of completed league moves (trades, waiver claims with FAAB bids, free-agent adds and drops) since a given week, newest first, with counts per team.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        league_id: {
+          type: "string",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
+        },
+        since_week: {
+          type: "number",
+          description: "First week to include (defaults to two weeks ago)",
+          minimum: 1,
+          maximum: 18,
+        },
+        type: {
+          type: "string",
+          enum: ["trade", "waiver", "free_agent"],
+          description: "Only this kind of move",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of moves to return",
+          minimum: 1,
+          maximum: 200,
+          default: 50,
+        },
+      },
+    },
+  },
+  {
+    name: "find_trade_partners",
+    description:
+      "Find realistic 1-for-1 trades: shows where your lineup is strong or thin by position versus the league, then tests every swap with every team and keeps only trades that improve BOTH teams' best lineups (by points per game this season).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        league_id: {
+          type: "string",
+          description:
+            "Sleeper league ID (optional; defaults to SLEEPER_LEAGUE_ID or your only league this season)",
+        },
+        user_id: {
+          type: "string",
+          description:
+            "Your user ID or username (optional; defaults to SLEEPER_USERNAME)",
+        },
+        target_position: {
+          type: "string",
+          description:
+            "Only trades where you receive this position (QB, RB, WR, TE)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of trade ideas",
+          minimum: 1,
+          maximum: 25,
+          default: 10,
+        },
+      },
+    },
+  },
+  {
     name: "get_player_details",
     description:
       "Get detailed information for specific player IDs including position, team, and injury status",
@@ -621,6 +760,9 @@ export type ToolInput =
   | z.infer<typeof GetTrendingPlayersSchema>
   | z.infer<typeof GetTrendingFreeAgentsSchema>
   | z.infer<typeof GetAllPlayRecordsSchema>
+  | z.infer<typeof GetOpponentScoutSchema>
+  | z.infer<typeof GetTransactionFeedSchema>
+  | z.infer<typeof FindTradePartnersSchema>
   | z.infer<typeof GetPlayerDetailsSchema>
   | z.infer<typeof ResearchPlayerStatusSchema>
   | z.infer<typeof AnalyzeLineupSchema>

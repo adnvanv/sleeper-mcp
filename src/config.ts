@@ -40,7 +40,13 @@ function loadEnvFile(): Record<string, string> {
 export interface SleeperConfig {
   username?: string;
   leagueId?: string;
+  /** Dashboard bind address. 127.0.0.1 = this machine only; 0.0.0.0 = LAN. */
+  dashboardHost: string;
+  dashboardPort: number;
 }
+
+export const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
+export const DEFAULT_DASHBOARD_PORT = 3030;
 
 /**
  * Real environment variables win over values from the .env file.
@@ -51,9 +57,15 @@ export function loadConfig(
 ): SleeperConfig {
   const pick = (key: string) =>
     (env[key] || fileValues[key] || "").trim() || undefined;
+  const port = Number(pick("DASHBOARD_PORT"));
   return {
     username: pick("SLEEPER_USERNAME"),
     leagueId: pick("SLEEPER_LEAGUE_ID"),
+    dashboardHost: pick("DASHBOARD_HOST") || DEFAULT_DASHBOARD_HOST,
+    dashboardPort:
+      Number.isInteger(port) && port > 0 && port < 65536
+        ? port
+        : DEFAULT_DASHBOARD_PORT,
   };
 }
 

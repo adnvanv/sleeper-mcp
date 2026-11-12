@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>League Dashboard</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="title">
+        <h1 id="league-name">Loading league…</h1>
+        <p id="league-meta" class="muted"></p>
+      </div>
+      <div class="controls">
+        <span id="refresh-status" class="pill" aria-live="polite"></span>
+        <button id="refresh" type="button" class="btn">Refresh</button>
+        <button
+          id="theme"
+          type="button"
+          class="btn btn-quiet"
+          aria-label="Change color theme"
+        >
+          Theme: auto
+        </button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <div class="col col-main">
+        <section class="panel area-matchups" data-panel="matchups">
+          <header class="panel-head">
+            <h2>This week</h2>
+            <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
+        <section class="panel area-standings" data-panel="standings">
+          <header class="panel-head">
+            <h2>Standings</h2>
+            <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
+        <section class="panel area-transactions" data-panel="transactions">
+          <header class="panel-head">
+            <h2>Recent moves</h2>
+            <div
+              class="chips"
+              role="group"
+              aria-label="Filter moves"
+              data-filters
+            ></div>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+      </div>
+      <div class="col col-side">
+        <section class="panel area-roster" data-panel="roster">
+          <header class="panel-head">
+            <h2>My roster</h2>
+            <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
+        <section class="panel area-free-agents" data-panel="free-agents">
+          <header class="panel-head">
+            <h2>Trending free agents</h2>
+            <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer muted">
+      Read-only view of public Sleeper data. Values are this season's fantasy
+      points per game in your league's scoring.
+    </footer>
+  </body>
+</html>

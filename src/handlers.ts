@@ -1,7 +1,12 @@
 import { sleeperClient } from "./sleeper-client.js";
 import { defaultsResolver } from "./defaults.js";
 import { findTrendingFreeAgents, getRosteredPlayerIds } from "./free-agents.js";
-import { computeAllPlay, playedWeeks, resolveThroughWeek } from "./all-play.js";
+import { computeAllPlay } from "./all-play.js";
+import { loadLeagueData, findRosterForUser } from "./league-data.js";
+import { playerStats } from "./season.js";
+import { scoutOpponent } from "./scout.js";
+import { buildTransactionFeed } from "./transaction-feed.js";
+import { findTrades, positionReports } from "./trade-finder.js";
 import {
   GetUserInfoSchema,
   GetUserLeaguesSchema,
@@ -14,6 +19,9 @@ import {
   GetTrendingPlayersSchema,
   GetTrendingFreeAgentsSchema,
   GetAllPlayRecordsSchema,
+  GetOpponentScoutSchema,
+  GetTransactionFeedSchema,
+  FindTradePartnersSchema,
   GetPlayerDetailsSchema,
   ResearchPlayerStatusSchema,
   AnalyzeLineupSchema,
@@ -77,6 +85,15 @@ export async function handleToolCall(name: string, rawArgs: any) {
 
       case "get_all_play_records":
         return handleGetAllPlayRecords(args);
+
+      case "get_opponent_scout":
+        return handleGetOpponentScout(args);
+
+      case "get_transaction_feed":
+        return handleGetTransactionFeed(args);
+
+      case "find_trade_partners":
+        return handleFindTradePartners(args);
 
       case "get_player_details":
         return handleGetPlayerDetails(args);
@@ -375,48 +392,158 @@ async function handleGetTrendingFreeAgents(args: any) {
 async function handleGetAllPlayRecords(args: any) {
   const { league_id, through_week } = GetAllPlayRecordsSchema.parse(args);
 
-  const [league, rosters, users, nflState] = await Promise.all([
-    sleeperClient.getLeague(league_id),
-    sleeperClient.getLeagueRosters(league_id),
-    sleeperClient.getLeagueUsers(league_id),
-    sleeperClient.getNFLState(),
-  ]);
-
-  const startWeek = league.settings.start_week || 1;
-  const lastWeek = resolveThroughWeek({
-    requested: through_week,
-    lastScoredWeek: league.settings.last_scored_leg,
-    currentWeek: nflState.week,
-    playoffWeekStart: league.settings.playoff_week_start,
-  });
-
-  const weekNumbers: number[] = [];
-  for (let w = startWeek; w <= lastWeek; w++) weekNumbers.push(w);
-  const weeks = await Promise.all(
-    weekNumbers.map(async (week) => ({
-      week,
-      matchups: await sleeperClient.getMatchups(league_id, week),
-    })),
-  );
-  const counted = playedWeeks(weeks).map((w) => w.week);
-
-  const medianGame = league.settings.league_average_match === 1;
+  const data = await loadLeagueData(league_id, { throughWeek: through_week });
+  const counted = data.weeks.map((w) => w.week);
+  const medianGame = data.league.settings.league_average_match === 1;
   const myUserId = await defaultsResolver
     .resolveUserId()
     .catch(() => undefined);
-  const standings = computeAllPlay(weeks, rosters, users, { medianGame }).map(
-    (r) => ({ ...r, is_you: r.owner_id === myUserId }),
-  );
+  const standings = computeAllPlay(data.weeks, data.rosters, data.users, {
+    medianGame,
+  }).map((r) => ({ ...r, is_you: r.owner_id === myUserId }));
 
   return {
-    league: league.name,
+    league: data.league.name,
     weeks_counted: counted,
     median_game: medianGame,
     standings,
     success: true,
     message: counted.length
-      ? `All-play standings for ${league.name}, weeks ${counted[0]}-${counted[counted.length - 1]}`
-      : `No scored weeks yet for ${league.name}`,
+      ? `All-play standings for ${data.league.name}, weeks ${counted[0]}-${counted[counted.length - 1]}`
+      : `No scored weeks yet for ${data.league.name}`,
+  };
+}
+
+async function getTransactionsForWeeks(
+  leagueId: string,
+  fromWeek: number,
+  toWeek: number,
+) {
+  const weeks: number[] = [];
+  for (let w = Math.max(1, fromWeek); w <= toWeek; w++) weeks.push(w);
+  const lists = await Promise.all(
+    weeks.map((w) => sleeperClient.getTransactions(leagueId, w)),
+  );
+  return lists.flat().filter(Boolean);
+}
+
+async function handleGetOpponentScout(args: any) {
+  const { league_id, user_id, week } = GetOpponentScoutSchema.parse(args);
+
+  const data = await loadLeagueData(league_id);
+  const scoutWeek = week || data.currentWeek;
+  const myRoster = findRosterForUser(data.rosters, user_id);
+  if (!myRoster) {
+    return { error: "User not found in this league", success: false };
+  }
+
+  const [currentMatchups, transactions] = await Promise.all([
+    sleeperClient.getMatchups(league_id, scoutWeek),
+    getTransactionsForWeeks(league_id, scoutWeek - 2, scoutWeek),
+  ]);
+
+  const report = scoutOpponent({
+    myRosterId: myRoster.roster_id,
+    week: scoutWeek,
+    currentMatchups: currentMatchups || [],
+    weeks: data.weeks.filter((w) => w.week < scoutWeek),
+    rosters: data.rosters,
+    users: data.users,
+    players: data.players,
+    rosterPositions: data.league.roster_positions,
+    schedule: data.schedule,
+    transactions,
+  });
+
+  if (!report.has_opponent) {
+    return {
+      ...report,
+      success: false,
+      error: `No opponent found for week ${scoutWeek} (bye week, playoffs, or matchups not set yet)`,
+    };
+  }
+
+  return {
+    ...report,
+    success: true,
+    message: `Week ${scoutWeek} scouting report on ${report.opponent.team_name} (${report.opponent.record})`,
+  };
+}
+
+async function handleGetTransactionFeed(args: any) {
+  const { league_id, since_week, type, limit } =
+    GetTransactionFeedSchema.parse(args);
+
+  const [league, rosters, users, nflState, players] = await Promise.all([
+    sleeperClient.getLeague(league_id),
+    sleeperClient.getLeagueRosters(league_id),
+    sleeperClient.getLeagueUsers(league_id),
+    sleeperClient.getNFLState(),
+    sleeperClient.getAllPlayers(),
+  ]);
+  const currentWeek = Math.max(nflState.display_week || nflState.week || 1, 1);
+  const fromWeek = since_week || Math.max(1, currentWeek - 2);
+  const transactions = await getTransactionsForWeeks(
+    league_id,
+    fromWeek,
+    Math.max(fromWeek, currentWeek),
+  );
+
+  const feed = buildTransactionFeed(transactions, rosters, users, players);
+  const items = (
+    type ? feed.items.filter((i) => i.type === type) : feed.items
+  ).slice(0, limit);
+
+  return {
+    league: league.name,
+    weeks: `${fromWeek}-${Math.max(fromWeek, currentWeek)}`,
+    counts: feed.counts,
+    by_team: feed.by_team,
+    moves: items,
+    count: items.length,
+    success: true,
+    message: `${items.length} moves in ${league.name} since week ${fromWeek}`,
+  };
+}
+
+async function handleFindTradePartners(args: any) {
+  const { league_id, user_id, target_position, limit } =
+    FindTradePartnersSchema.parse(args);
+
+  const data = await loadLeagueData(league_id);
+  const myRoster = findRosterForUser(data.rosters, user_id);
+  if (!myRoster) {
+    return { error: "User not found in this league", success: false };
+  }
+
+  const input = {
+    myRosterId: myRoster.roster_id,
+    rosters: data.rosters,
+    users: data.users,
+    players: data.players,
+    stats: playerStats(data.weeks),
+    rosterPositions: data.league.roster_positions,
+    targetPosition: target_position,
+    limit,
+  };
+  const positions = positionReports(input);
+  const trades = findTrades(input);
+
+  return {
+    league: data.league.name,
+    weeks_counted: data.weeks.map((w) => w.week),
+    your_positions: positions,
+    needs: positions.filter((p) => p.verdict === "need").map((p) => p.position),
+    strengths: positions
+      .filter((p) => p.verdict === "strength")
+      .map((p) => p.position),
+    trade_ideas: trades,
+    count: trades.length,
+    note: "Values are fantasy points per game this season from your league's scoring. Only 1-for-1 swaps that improve both teams' best lineups are listed.",
+    success: true,
+    message: trades.length
+      ? `Found ${trades.length} trade ideas that help both sides`
+      : "No 1-for-1 trades found that improve both lineups",
   };
 }
 

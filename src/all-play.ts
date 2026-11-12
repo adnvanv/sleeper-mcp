@@ -3,11 +3,9 @@ import type {
   SleeperMatchup,
   SleeperRoster,
 } from "./types.js";
+import { playedWeeks, teamName, type WeekScores } from "./season.js";
 
-export interface WeekScores {
-  week: number;
-  matchups: SleeperMatchup[];
-}
+export { playedWeeks, type WeekScores };
 
 export interface AllPlayRecord {
   roster_id: number;
@@ -33,21 +31,6 @@ const round = (n: number, places = 3) => {
 
 const winPct = (w: number, l: number, t: number) =>
   w + l + t === 0 ? 0 : round((w + t / 2) / (w + l + t));
-
-function teamName(roster: SleeperRoster, user?: SleeperLeagueUser): string {
-  return (
-    user?.metadata?.team_name ||
-    user?.display_name ||
-    `Team ${roster.roster_id}`
-  );
-}
-
-/**
- * A week counts only if somebody scored, so unplayed weeks are skipped.
- */
-export function playedWeeks(weeks: WeekScores[]): WeekScores[] {
-  return weeks.filter((w) => w.matchups.some((m) => (m.points || 0) > 0));
-}
 
 export interface AllPlayOptions {
   /** League also plays everyone against the weekly median score. */

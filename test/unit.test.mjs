@@ -40,14 +40,25 @@ test("loadConfig prefers real env vars over .env values", () => {
     { SLEEPER_USERNAME: "fromenv" },
     { SLEEPER_USERNAME: "fromfile", SLEEPER_LEAGUE_ID: "42" },
   );
-  assert.deepEqual(cfg, { username: "fromenv", leagueId: "42" });
+  assert.equal(cfg.username, "fromenv");
+  assert.equal(cfg.leagueId, "42");
 });
 
 test("loadConfig treats empty values as unset", () => {
-  assert.deepEqual(loadConfig({ SLEEPER_LEAGUE_ID: " " }, {}), {
-    username: undefined,
-    leagueId: undefined,
-  });
+  const cfg = loadConfig({ SLEEPER_LEAGUE_ID: " " }, {});
+  assert.equal(cfg.username, undefined);
+  assert.equal(cfg.leagueId, undefined);
+});
+
+test("dashboard host and port default and validate", () => {
+  assert.deepEqual(
+    [loadConfig({}, {}).dashboardHost, loadConfig({}, {}).dashboardPort],
+    ["127.0.0.1", 3030],
+  );
+  const cfg = loadConfig({ DASHBOARD_HOST: "0.0.0.0" }, { DASHBOARD_PORT: "8080" });
+  assert.deepEqual([cfg.dashboardHost, cfg.dashboardPort], ["0.0.0.0", 8080]);
+  assert.equal(loadConfig({ DASHBOARD_PORT: "nope" }, {}).dashboardPort, 3030);
+  assert.equal(loadConfig({ DASHBOARD_PORT: "70000" }, {}).dashboardPort, 3030);
 });
 
 test("fills username for get_user_info", async () => {

@@ -80,6 +80,17 @@ export interface SleeperMatchup {
   starters: string[];
   players: string[];
   custom_points?: number | null;
+  starters_points?: number[];
+  players_points?: Record<string, number>;
+}
+
+export interface NFLGame {
+  game_id: string;
+  week: number;
+  date: string;
+  home: string;
+  away: string;
+  status: string;
 }
 
 export interface SleeperPlayer {

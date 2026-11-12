@@ -7,6 +7,11 @@
 
 A comprehensive Model Context Protocol (MCP) Server for integrating with Sleeper Fantasy Football. This server enables AI assistants like Claude to perform advanced fantasy football analysis and provide strategic recommendations.
 
+> **This fork** adds username/league defaults, five league-analysis tools (trending free agents, all-play records, opponent scout, transaction feed, trade finder), a local web dashboard, and fixes for Windows and stdio logging.
+>
+> - **[SETUP.md](SETUP.md)**: install, connect Claude Desktop, run the dashboard, deploy to Ubuntu
+> - **[PROJECT.md](PROJECT.md)**: architecture, every tool, and how the analysis works
+
 ## 📦 Installation
 
 ```bash
@@ -104,7 +109,13 @@ npm run build
 #### Defaults (optional)
 Set `SLEEPER_USERNAME` and, optionally, `SLEEPER_LEAGUE_ID` in the `env` block above or in a gitignored `.env` file (see `.env.example`). Tools then fill in `username_or_id`, `user_id`, `league_id`, and `season` when you leave them out. Without `SLEEPER_LEAGUE_ID`, your only league this season is used. A non-numeric `user_id` is looked up as a username.
 
-### 3. Test
+### 3. Dashboard
+```bash
+npm run dashboard      # then open http://localhost:3030
+```
+Matchups with live scores, your roster with injury/bye flags, all-play standings, trending free agents and league moves. Light and dark mode, phone-friendly, auto-refreshes during games. Set `DASHBOARD_HOST` / `DASHBOARD_PORT` to change where it listens. See [SETUP.md](SETUP.md).
+
+### 4. Test
 ```bash
 npm test               # Offline unit tests, then MCP protocol tests
 npm run test:coverage  # Show detailed code coverage
@@ -187,6 +198,9 @@ Start a conversation with Claude and try:
 - `search_players` - Search players in the database
 - `get_trending_players` - Trending add/drop players
 - `get_trending_free_agents` - Trending adds nobody in your league has rostered (IR and taxi count as rostered), at positions your league starts
+- `get_opponent_scout` - This week's opponent: lineup with injury/bye flags, weak and strong slots vs. league averages, bench depth, recent moves
+- `get_transaction_feed` - Readable feed of league trades, waiver claims (with FAAB) and free-agent moves since a given week
+- `find_trade_partners` - Your positional strengths and needs, plus 1-for-1 trades that improve both teams' best lineups
 - `get_all_play_records` - Each team's all-play record (vs. every team, every week) next to its actual record, with expected wins and a luck score
 - `get_player_details` - Detailed player information
 - `compare_players` - Head-to-head player comparisons

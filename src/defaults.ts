@@ -9,6 +9,8 @@ const USER_ID_TOOLS = new Set([
   "analyze_lineup",
   "get_waiver_suggestions",
   "get_start_sit_advice",
+  "get_opponent_scout",
+  "find_trade_partners",
 ]);
 
 const LEAGUE_ID_TOOLS = new Set([
@@ -23,6 +25,9 @@ const LEAGUE_ID_TOOLS = new Set([
   "get_start_sit_advice",
   "get_trending_free_agents",
   "get_all_play_records",
+  "get_opponent_scout",
+  "get_transaction_feed",
+  "find_trade_partners",
 ]);
 
 const SEASON_TOOLS = new Set(["get_user_leagues"]);
@@ -39,7 +44,7 @@ export class DefaultsResolver {
 
   constructor(
     private client: Client = sleeperClient,
-    private cfg: SleeperConfig = defaultConfig,
+    private cfg: Pick<SleeperConfig, "username" | "leagueId"> = defaultConfig,
   ) {}
 
   async apply(toolName: string, args: Record<string, any>) {

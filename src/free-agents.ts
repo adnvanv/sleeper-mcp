@@ -3,24 +3,7 @@ import type {
   SleeperRoster,
   SleeperTrendingPlayer,
 } from "./types.js";
-
-// Which player positions each league roster slot can hold.
-const SLOT_POSITIONS: Record<string, string[]> = {
-  QB: ["QB"],
-  RB: ["RB"],
-  WR: ["WR"],
-  TE: ["TE"],
-  K: ["K"],
-  DEF: ["DEF"],
-  DL: ["DL"],
-  LB: ["LB"],
-  DB: ["DB"],
-  FLEX: ["RB", "WR", "TE"],
-  WRRB_FLEX: ["WR", "RB"],
-  REC_FLEX: ["WR", "TE"],
-  SUPER_FLEX: ["QB", "RB", "WR", "TE"],
-  IDP_FLEX: ["DL", "LB", "DB"],
-};
+import { SLOT_POSITIONS } from "./season.js";
 
 /** Every player ID on any roster in the league, including IR and taxi. */
 export function getRosteredPlayerIds(rosters: SleeperRoster[]): Set<string> {
