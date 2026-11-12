@@ -299,8 +299,8 @@ For the week's head-to-head opponent, the report covers:
 Only completed moves are kept (failed waiver claims are dropped), each one
 once, newest first. Each move is split into sides (players added, players
 dropped, draft picks received with their original owner, FAAB received). It
-gets a one-line summary, for example *"Trade: Cock & Roll gets Matthew
-Stafford (QB, LAR)…; The New New York Jets gets Brock Purdy (QB, SF)"*. The
+gets a one-line summary, for example *"Trade: Team A gets Matthew
+Stafford (QB, LAR)…; Team B gets Brock Purdy (QB, SF)"*. The
 feed also counts moves by type and by team.
 
 ## 8. Dashboard
