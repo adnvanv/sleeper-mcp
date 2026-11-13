@@ -2696,3 +2696,16 @@ table.strength td.sg.weak {
     transform: rotate(90deg);
   }
 }
+
+.trade-card .subhead {
+  margin-top: 14px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.trade-card .subhead + .impacts {
+  margin-top: 6px;
+}

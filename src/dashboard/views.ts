@@ -12,7 +12,7 @@ import { leaguePoints, scheduleOutlook } from "../feeds/analysis.js";
 import { adjustFactor } from "../feeds/advisor.js";
 import { gamesByTeam, paceOf, statLine, type LiveGame } from "../feeds/live.js";
 import type { FeedPoller } from "../feeds/poller.js";
-import { evaluateTrade, positionStrength, suggestTrades, tradeReasons, type TradeContext, type TradeEval } from "../feeds/trades.js";
+import { evaluateTrade, playedOut, positionStrength, suggestTrades, tradeReasons, type TradeContext, type TradeEval } from "../feeds/trades.js";
 import type { NFLGame, SleeperPlayer, SleeperRoster } from "../types.js";
 
 type State = ReturnType<FeedPoller["state"]>;
@@ -847,7 +847,15 @@ export async function tradesView(st: State) {
   const strength = positionStrength(data.weeks, data.league.roster_positions);
   const me = { roster_id: mine.roster_id, ids: active(mine) };
   const others = data.rosters.filter((r) => r.roster_id !== mine.roster_id).map((r) => ({ roster_id: r.roster_id, ids: active(r) }));
-  const ideas = suggestTrades(ctx, me, others, strength, { limit: 10, perPartner: 3 });
+  const teamNameOf = (rid: number) => {
+    const r = data.rosters.find((x) => x.roster_id === rid);
+    return r ? teamName(r, data.users.find((u) => u.user_id === r.owner_id)) : `Team ${rid}`;
+  };
+  const ideas = suggestTrades(ctx, me, others, strength, {
+    limit: 10,
+    perPartner: 3,
+    names: (pid) => ({ a: teamNameOf(mine.roster_id), b: teamNameOf(pid) }),
+  });
 
   // Every completed trade this season, judged from today forward.
   const lists = await Promise.all(
@@ -875,10 +883,19 @@ export async function tradesView(st: State) {
         bGets,
         aGets,
       );
+      const played = playedOut(data.weeks, t.leg, { roster_id: ra, gets: aGets }, { roster_id: rb, gets: bGets });
+      const nameP = (id: string) => name(data.players.get(id), id);
       return {
         transaction_id: t.transaction_id,
         date: new Date(t.status_updated || t.created).toISOString(),
         week: t.leg,
+        played: played
+          ? {
+              ...played,
+              a: { ...played.a, players: played.a.players.map((p) => ({ ...p, name: nameP(p.player_id) })) },
+              b: { ...played.b, players: played.b.players.map((p) => ({ ...p, name: nameP(p.player_id) })) },
+            }
+          : null,
         involves_you: (t.roster_ids as number[]).includes(mine.roster_id),
         draft_picks: (t.draft_picks || []).length,
         ...describeEval(st, data, ctx, e),
@@ -918,5 +935,9 @@ export async function tradeEvalView(st: State, partner: number, give: string[], 
   }
   const e = evaluateTrade(ctx, { roster_id: mine.roster_id, ids: [...new Set([...mineIds, ...give])] }, { roster_id: partner, ids: [...new Set([...theirIds, ...get])] }, give, get);
   const strength = positionStrength(data.weeks, data.league.roster_positions);
-  return { ...describeEval(st, data, ctx, e), reasons: tradeReasons(e, ctx, strength, mine.roster_id, partner) };
+  const nm = (r: SleeperRoster) => teamName(r, data.users.find((u) => u.user_id === r.owner_id));
+  return {
+    ...describeEval(st, data, ctx, e),
+    reasons: tradeReasons(e, ctx, strength, mine.roster_id, partner, { a: nm(mine), b: nm(them) }),
+  };
 }

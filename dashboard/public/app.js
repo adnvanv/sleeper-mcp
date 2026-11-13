@@ -962,16 +962,39 @@ function tradeImpact(e) {
   return h(
     "div",
     { class: "impacts" },
-    bar("Your lineup", e.a.ros_gain, e.a.playoff_gain),
-    bar("Their lineup", e.b.ros_gain, e.b.playoff_gain),
+    bar(`${e.a.team_name} lineup`, e.a.ros_gain, e.a.playoff_gain),
+    bar(`${e.b.team_name} lineup`, e.b.ros_gain, e.b.playoff_gain),
     h(
       "div",
       { class: "impact" },
-      h("span", { class: "who" }, "Trade value"),
-      h("b", {}, `${e.a.value_gets.toLocaleString()} for ${e.a.value_gives.toLocaleString()}`),
-      h("span", { class: "muted" }, Math.abs(pct) <= 5 ? "about even" : pct > 0 ? `they get ${pct}% more` : `you get ${-pct}% more`),
+      h("span", { class: "who" }, `Trade value: ${e.a.team_name} gets / gives`),
+      h("b", {}, `${e.a.value_gets.toLocaleString()} / ${e.a.value_gives.toLocaleString()}`),
+      h("span", { class: "muted" }, Math.abs(pct) <= 5 ? "about even" : pct > 0 ? `${e.b.team_name} gets ${pct}% more` : `${e.a.team_name} gets ${-pct}% more`),
     ),
   );
+}
+
+/** How a past trade actually played out: points the incoming players scored for each team. */
+function playedBlock(e, played) {
+  const weeks = played.from_week === played.to_week ? `week ${played.from_week}` : `weeks ${played.from_week}–${played.to_week}`;
+  const side = (team, sideData) =>
+    h(
+      "div",
+      { class: "impact" },
+      h("span", { class: "who" }, `${team} got`),
+      h("b", {}, `${sideData.started.toFixed(1)} pts`),
+      h("span", { class: "muted" }, `in starting lineups (${sideData.total.toFixed(1)} total)`),
+      h(
+        "span",
+        { class: "muted" },
+        sideData.players.map((p) => `${p.name}: ${p.started.toFixed(1)}${p.starts ? ` in ${p.starts} start${p.starts > 1 ? "s" : ""}` : p.weeks ? " (benched)" : " (no longer rostered)"}`).join(" · "),
+      ),
+    );
+  const diff = played.a.started - played.b.started;
+  return [
+    h("div", { class: "subhead" }, `So far (${weeks}): ${Math.abs(diff) < 3 ? "about even" : `${diff > 0 ? e.a.team_name : e.b.team_name} is ahead by ${Math.abs(diff).toFixed(1)} starting pts`}`),
+    h("div", { class: "impacts" }, side(e.a.team_name, played.a), side(e.b.team_name, played.b)),
+  ];
 }
 
 function tradeCardView(e, opts = {}) {
@@ -983,7 +1006,7 @@ function tradeCardView(e, opts = {}) {
       { class: "trade-head" },
       avatar(e.b.avatar, e.b.team_name),
       h("div", { style: { flex: "1", minWidth: "0" } }, h("div", { class: "nm" }, opts.title || `Trade with ${e.b.team_name}`), opts.sub ? h("div", { class: "muted", style: { fontSize: "0.76rem" } }, opts.sub) : null),
-      e.acceptance ? h("span", { class: `accept ${e.acceptance.replace(" ", "-")}` }, ACCEPT[e.acceptance]) : null,
+      e.acceptance && !opts.played && !opts.completed ? h("span", { class: `accept ${e.acceptance.replace(" ", "-")}` }, ACCEPT[e.acceptance]) : null,
     ),
     h(
       "div",
@@ -992,6 +1015,8 @@ function tradeCardView(e, opts = {}) {
       h("div", { class: "arrow", "aria-hidden": "true" }, "⇄"),
       h("div", {}, h("h4", {}, opts.getLabel || "You get"), e.a.gets_cards.map(tradePlayer)),
     ),
+    opts.played ? playedBlock(e, opts.played) : null,
+    opts.played ? h("div", { class: "subhead" }, "From here on (projections)") : null,
     tradeImpact(e),
     e.reasons?.length ? h("ul", { class: "reasons", style: { marginTop: "10px" } }, e.reasons.map((r) => h("li", {}, r))) : null,
     opts.actions ? h("div", { class: "actions", style: { gap: "8px" } }, opts.actions) : null,
@@ -1172,8 +1197,10 @@ function leagueTradesSection() {
     t.league_trades.slice(0, 8).map((e) => {
       const winner = e.a.ros_gain - e.b.ros_gain;
       return tradeCardView(e, {
+        played: e.played,
+        completed: true,
         title: `${e.a.team_name} ⇄ ${e.b.team_name}`,
-        sub: `Week ${e.week} · ${timeAgo(e.date)}${e.draft_picks ? ` · plus ${e.draft_picks} draft pick${e.draft_picks > 1 ? "s" : ""}` : ""} · ${Math.abs(winner) < 2 ? "about even" : `${winner > 0 ? e.a.team_name : e.b.team_name} wins it`}`,
+        sub: `Week ${e.week} · ${timeAgo(e.date)}${e.draft_picks ? ` · plus ${e.draft_picks} draft pick${e.draft_picks > 1 ? "s" : ""}` : ""} · ${Math.abs(winner) < 2 ? "about even from here" : `${winner > 0 ? e.a.team_name : e.b.team_name} comes out ahead from here`}`,
         giveLabel: `${e.a.team_name} gives`,
         getLabel: `${e.a.team_name} gets`,
       });

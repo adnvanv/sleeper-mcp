@@ -599,8 +599,13 @@ outside image host the Content-Security-Policy allows).
   `/api/trade-eval?partner=&give=&get=` returns the same evaluation.
 - **League trades:** Sleeper's API only shows trades once they're accepted
   (pending offers are private), so every completed trade this season is
-  evaluated from today forward on the LEAGUE tab, and new ones (last three
-  days) appear on HOME.
+  evaluated on the LEAGUE tab, and new ones (last three days) appear on HOME.
+  Once at least one scored week has passed, the card shows how it actually
+  played out: the points each team's incoming players scored for it since
+  (in starting lineups and in total, per player, counting only weeks they
+  were still rostered), then the projected impact from today on.
+- Evaluations name the teams ("Jadih Hurts lineup", "Efundy lineup")
+  instead of "your" and "their".
 
 ### Computed views (`src/dashboard/views.ts`)
 
@@ -624,7 +629,7 @@ outside image host the Content-Security-Policy allows).
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 138 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 140 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out

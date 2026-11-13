@@ -68,3 +68,33 @@ test("position strength ranks each team's starting slots against the league", ()
   assert.deepEqual(s.get(1).get("RB"), { group: "RB", ppg: 15, diff: 2.5, rank: 1 });
   assert.deepEqual(s.get(1).get("WR"), { group: "WR", ppg: 5, diff: -5, rank: 2 });
 });
+
+import { playedOut, tradeReasons } from "../dist/feeds/trades.js";
+
+test("played out counts incoming players' points for their new team after the trade", () => {
+  const weeks = [
+    { week: 5, matchups: [{ roster_id: 1, players: ["x"], starters: ["x"], players_points: { x: 30 } }] }, // before trade
+    { week: 6, matchups: [
+      { roster_id: 1, players: ["y"], starters: ["y"], players_points: { y: 12 } },
+      { roster_id: 2, players: ["x"], starters: [], players_points: { x: 20 } }, // benched
+    ] },
+    { week: 7, matchups: [
+      { roster_id: 1, players: ["y"], starters: ["y"], players_points: { y: 8 } },
+      { roster_id: 2, players: ["x"], starters: ["x"], players_points: { x: 15 } },
+    ] },
+  ];
+  const r = playedOut(weeks, 5, { roster_id: 1, gets: ["y"] }, { roster_id: 2, gets: ["x"] });
+  assert.equal(r.from_week, 6);
+  assert.equal(r.to_week, 7);
+  assert.equal(r.a.started, 20);
+  assert.equal(r.b.started, 15);
+  assert.equal(r.b.total, 35);
+  assert.deepEqual(r.b.players[0], { player_id: "x", started: 15, total: 35, starts: 1, weeks: 2 });
+  assert.equal(playedOut(weeks, 7, { roster_id: 1, gets: [] }, { roster_id: 2, gets: [] }), null); // nothing played yet
+});
+
+test("trade reasons name the teams", () => {
+  const e = evaluateTrade(ctx, me, them, ["r2"], ["w3"]);
+  const reasons = tradeReasons(e, ctx, new Map(), 1, 2, { a: "Jadih Hurts", b: "Efundy" });
+  assert.ok(reasons.some((r) => r.startsWith("Jadih Hurts's starting lineup: +18.0") && r.includes("Efundy's: +18.0")));
+});

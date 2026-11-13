@@ -183,7 +183,14 @@ export function suggestTrades(
   me: { roster_id: number; ids: string[] },
   others: { roster_id: number; ids: string[] }[],
   strength: Map<number, Map<string, Strength>>,
-  options: { pool?: number; perPartner?: number; limit?: number; minGainMe?: number } = {},
+  options: {
+    pool?: number;
+    perPartner?: number;
+    limit?: number;
+    minGainMe?: number;
+    /** Team names for the reasons text (a = you, b = partner). */
+    names?: (partnerId: number) => { a: string; b: string };
+  } = {},
 ): TradeIdea[] {
   const pool = options.pool ?? 10;
   const minMe = options.minGainMe ?? 3;
@@ -249,6 +256,7 @@ export function tradeReasons(
   strength: Map<number, Map<string, Strength>>,
   myId: number,
   theirId: number,
+  names: { a: string; b: string } = { a: "Your", b: "Their" },
 ): string[] {
   const out: string[] = [];
   const mine = strength.get(myId);
@@ -270,8 +278,9 @@ export function tradeReasons(
     const s = theirs?.get(pos);
     if (s && s.rank <= teams / 3) out.push(`They're deep at ${pos}: ${ordinal(s.rank)} (${signed(s.diff)} a week)`);
   }
+  const possessive = (n: string) => (n === "Your" || n === "Their" ? n : `${n}'s`);
   out.push(
-    `Your starting lineup: ${signed(e.a.ros_gain)} pts rest of season (${signed(e.a.playoff_gain)} in the playoffs); theirs: ${signed(e.b.ros_gain)}`,
+    `${possessive(names.a)} starting lineup: ${signed(e.a.ros_gain)} pts rest of season (${signed(e.a.playoff_gain)} in the playoffs); ${possessive(names.b)}: ${signed(e.b.ros_gain)} (${signed(e.b.playoff_gain)} in the playoffs)`,
   );
   const pct = Math.round((e.value_ratio_b - 1) * 100);
   out.push(
@@ -292,4 +301,63 @@ function ordinal(n: number) {
   const v = n % 100;
   const s = ["th", "st", "nd", "rd"];
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// ---------- how a past trade played out ----------
+
+export interface PlayedSide {
+  roster_id: number;
+  /** Points the received players scored in this team's starting lineup. */
+  started: number;
+  /** All points they scored for this team, bench included. */
+  total: number;
+  players: { player_id: string; started: number; total: number; starts: number; weeks: number }[];
+}
+
+/**
+ * Actual results after a trade: for each scored week after the trade, the
+ * points each team's incoming players scored for it (as starters, and in
+ * total). Players later dropped or traded on count only while rostered.
+ */
+export function playedOut(
+  weeks: { week: number; matchups: { roster_id: number; starters?: string[]; players?: string[]; players_points?: Record<string, number> }[] }[],
+  tradeWeek: number,
+  a: { roster_id: number; gets: string[] },
+  b: { roster_id: number; gets: string[] },
+): { from_week: number; to_week: number; a: PlayedSide; b: PlayedSide } | null {
+  const after = weeks.filter((w) => w.week > tradeWeek);
+  if (!after.length) return null;
+  const side = (rid: number, gets: string[]): PlayedSide => {
+    const players = gets.map((id) => ({ player_id: id, started: 0, total: 0, starts: 0, weeks: 0 }));
+    for (const w of after) {
+      const m = w.matchups.find((x) => x.roster_id === rid);
+      if (!m) continue;
+      for (const p of players) {
+        if (!(m.players || []).includes(p.player_id)) continue;
+        const pts = m.players_points?.[p.player_id] ?? 0;
+        p.weeks++;
+        p.total += pts;
+        if ((m.starters || []).includes(p.player_id)) {
+          p.started += pts;
+          p.starts++;
+        }
+      }
+    }
+    for (const p of players) {
+      p.started = r1(p.started);
+      p.total = r1(p.total);
+    }
+    return {
+      roster_id: rid,
+      started: r1(players.reduce((t, p) => t + p.started, 0)),
+      total: r1(players.reduce((t, p) => t + p.total, 0)),
+      players,
+    };
+  };
+  return {
+    from_week: after[0].week,
+    to_week: after[after.length - 1].week,
+    a: side(a.roster_id, a.gets),
+    b: side(b.roster_id, b.gets),
+  };
 }
