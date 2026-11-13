@@ -456,9 +456,12 @@ one), which used to mean no per-player news. IDs now come from Sleeper, then
 FantasyCalc's mapping, then ESPN's player search (exact name), cached in
 `.cache/espn-ids.json`.
 
-**Per-player news.** On top of the league-wide feeds, the poller asks ESPN's
-fantasy news API for each of your players and the advisor's top ten pickups
-(every 10 minutes, 3 on game days, 2 while your players are on). Those items
+**Per-player news.** On top of the league-wide feeds (Rotowire RSS and ESPN
+news every 2 minutes, every minute on game days), the poller asks ESPN's
+fantasy news API for your players and the advisor's top ten pickups on a
+rolling basis: every minute it refreshes the 6-8 players whose news is
+stalest, so each of your players is checked about every 3 minutes. The
+advisor reruns only when new items arrive. Those items
 are Rotowire's player blurbs with their analysis. The same story arriving from
 the Rotowire RSS feed is recognized by player and opening words, and only the
 copy with more information is kept.
@@ -487,6 +490,26 @@ outside image host the Content-Security-Policy allows).
 
 - **Split screen.** League views on the left, a players pane on the right.
   Under 1100px the pane becomes a PLAYERS tab.
+- **HOME:** stat tiles (record, playoff odds with win/lose split, points a
+  week vs the league median, lineup efficiency, luck), a "Do this now" list
+  (start/sit swaps, lineup alerts, top waiver moves, hold warnings, injury
+  news on your starters, high-stakes weeks), and three charts: weekly score
+  vs the league median (filled dot = win, ring = loss), points a week by
+  starting position vs the league average, and points left on the bench each
+  week (red = weeks your bench would have won). Every chart has a hover
+  tooltip and a table view; chart colors were checked with the dataviz
+  palette validator against the dark surface.
+- **Open in Sleeper.** The API is read-only, so recommendations, the team
+  tab, the matchup bar and the player sheet link into Sleeper
+  (`sleeper.com/leagues/<id>/…`), which opens the Sleeper app on a phone.
+- **Matchup bar** pinned to the bottom of the MATCHUP tab: previous/next
+  week and a selector for any matchup in the league. Past weeks show final
+  scores with each starter's stat line (`/api/matchup?week=&id=`).
+- **Installable.** `manifest.webmanifest`, app icons and iOS meta tags let
+  it be added to a phone's home screen and open full screen. Phones only
+  allow that over HTTPS: serve the dashboard through Tailscale
+  (`tailscale serve --bg --https=8443 http://<tailscale-ip>:3030`), which
+  stays private to your tailnet.
 - **Left tabs:** MATCHUP (both lineups side by side, slot by slot, with live
   points, green/red pace, win chance, live games and a scoring ticker, then
   league scores), TEAM (team card with win bar, start/sit tips, starters,

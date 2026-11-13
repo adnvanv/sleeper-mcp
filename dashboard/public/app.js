@@ -9,6 +9,7 @@
 
 import { h, fmt1, timeAgo } from "./dom.js";
 import { refreshInterval, isGameWindow } from "./refresh.js";
+import { weeklyChart, positionChart, benchChart } from "./charts.js";
 
 // ---------- state ----------
 
@@ -27,6 +28,8 @@ const S = {
   values: null,
   outlook: null,
   status: null,
+  insights: null,
+  matchupView: null,
 };
 
 const ui = {
@@ -41,7 +44,21 @@ const ui = {
   giving: new Set(),
   getting: new Set(),
   standingsView: "odds",
+  mWeek: null, // matchup week being viewed (null = current)
+  mId: null, // matchup id being viewed (null = yours)
 };
+
+// ---------- Sleeper links ----------
+
+/** A link into Sleeper (opens the app on a phone that has it). */
+function sleeperUrl(section = "") {
+  const id = S.summary?.league_id;
+  return id ? `https://sleeper.com/leagues/${id}${section ? `/${section}` : ""}` : "https://sleeper.com";
+}
+
+function sleeperButton(label, section) {
+  return h("a", { class: "sleeper-btn", href: sleeperUrl(section), target: "_blank", rel: "noopener noreferrer", onclick: (e) => e.stopPropagation() }, label);
+}
 
 // ---------- small helpers ----------
 
@@ -116,6 +133,14 @@ function oppText(game, position) {
     { class: cls || null, title: rank ? `${game.opponent} gives up the ${ordinal(rank)}-most points to ${position}s` : null },
     `${game.home ? "vs" : "@"} ${game.opponent}`,
   );
+}
+
+/** "Ja'Marr Chase" → "J. Chase" (team defenses keep their name). */
+function shortName(name = "") {
+  const parts = name.split(" ");
+  if (parts.length < 2) return name;
+  const suffix = /^(Jr\.?|Sr\.?|II|III|IV|V)$/i.test(parts.at(-1)) ? parts.pop() : "";
+  return `${parts[0][0]}. ${parts.slice(1).join(" ")}${suffix ? ` ${suffix}` : ""}`;
 }
 
 function ordinal(n) {
@@ -242,6 +267,100 @@ function teamRow(r, { flash } = {}) {
   );
 }
 
+// ---------- HOME (recommendations + analytics) ----------
+
+function tile(label, value, sub, tone) {
+  return h("div", { class: "tile" }, h("small", {}, label), h("b", { class: tone || null }, value), sub ? h("span", {}, sub) : null);
+}
+
+function recommendations() {
+  const recs = [];
+  const t = S.team;
+  for (const tip of t?.tips || []) {
+    recs.push({
+      kind: tip.kind === "swap" ? "Lineup" : "Alert",
+      tone: tip.kind === "swap" ? "go" : "warn",
+      text: tip.text,
+      gain: tip.gain ? `+${r1(tip.gain)} pts this week` : null,
+      action: sleeperButton("Set lineup", "team"),
+      id: tip.start || tip.sit,
+    });
+  }
+  for (const m of (S.advice?.moves || []).slice(0, 3)) {
+    recs.push({
+      kind: "Waivers",
+      tone: "go",
+      text: `Add ${m.add.name}, drop ${m.drop.name}${m.cautions?.length ? " (read the caution first)" : ""}`,
+      gain: `+${r1(m.ros_gain)} ROS pts`,
+      action: sleeperButton("Add", "players"),
+      id: m.add.player_id,
+    });
+  }
+  for (const d of (S.advice?.drops || []).filter((x) => x.player.hold_flags?.length).slice(0, 2)) {
+    recs.push({ kind: "Hold", tone: "warn", text: `Don't drop ${d.player.name} yet: ${d.player.hold_flags[0]}`, id: d.player.player_id });
+  }
+  const starters = new Set((t?.starters || []).map((r) => r.player_id));
+  const fresh = (S.news?.items || []).filter(
+    (n) => n.relevance === "mine" && n.kind === "injury" && Date.now() - Date.parse(n.published) < 48 * 3600 * 1000 && n.player_ids.some((id) => starters.has(id)),
+  );
+  for (const n of fresh.slice(0, 3)) recs.push({ kind: "Injury", tone: "warn", text: n.title, id: n.player_ids[0] });
+  const o = S.odds;
+  if (o?.if_win != null && o.if_win - o.if_lose >= 15) {
+    recs.push({ kind: "Playoffs", tone: "info", text: `Week ${o.first_week} swings your playoff odds from ${o.if_lose}% to ${o.if_win}%. Start your best lineup.` });
+  }
+  return recs;
+}
+
+function renderHome(el) {
+  const ins = S.insights;
+  const odds = S.odds;
+  const me = odds?.teams.find((t) => t.is_you);
+  const st = S.standings?.standings.find((r) => r.is_you);
+  const recs = recommendations();
+  const pfRank = S.standings ? [...S.standings.standings].sort((a, b) => b.points_for - a.points_for).findIndex((r) => r.is_you) + 1 : null;
+  fill(
+    el,
+    h(
+      "div",
+      { class: "tiles" },
+      tile("Record", me?.record ?? "–", S.team ? `#${S.team.rank} in the league` : null),
+      tile("Playoff odds", me ? `${me.playoff_pct}%` : "–", odds?.if_win != null ? `${odds.if_win}% with a win · ${odds.if_lose}% with a loss` : null, me ? (me.playoff_pct >= 50 ? "good" : "bad") : null),
+      tile("Points a week", ins?.avg_points != null ? r1(ins.avg_points) : "–", ins ? `League median ${r1(ins.avg_median)}${pfRank ? ` · ${ordinal(pfRank)} in points` : ""}` : null),
+      tile("Lineup efficiency", ins?.efficiency != null ? `${ins.efficiency}%` : "–", ins ? `${r1(ins.bench_left_total)} pts left on your bench` : null),
+      tile("Luck", st ? `${st.luck > 0 ? "+" : ""}${st.luck.toFixed(1)} W` : "–", st ? `All-play ${st.all_play.wins}-${st.all_play.losses}` : null, st ? (st.luck >= 0 ? "good" : "bad") : null),
+    ),
+    sectionHead("Do this now", recs.length ? `${recs.length} recommendation${recs.length === 1 ? "" : "s"}` : null),
+    recs.length
+      ? h(
+          "div",
+          { class: "recs" },
+          recs.map((r) =>
+            h(
+              "div",
+              { class: `rec ${r.tone}`, onclick: r.id ? () => openSheet(r.id) : null, role: r.id ? "button" : null, tabindex: r.id ? "0" : null },
+              h("span", { class: "rec-kind" }, r.kind),
+              h("span", { class: "rec-text" }, r.text),
+              r.gain ? h("span", { class: "rec-gain" }, r.gain) : null,
+              r.action || null,
+            ),
+          ),
+        )
+      : h("p", { class: "state" }, "Nothing urgent. Your lineup is set and no free agent beats your roster."),
+    ins?.weeks?.length
+      ? [
+          sectionHead("Weekly scores", "You vs the league median"),
+          h("div", { class: "card" }, weeklyChart(ins.weeks)),
+          sectionHead("Where you win and lose", "Points a week by starting position vs the league average"),
+          h("div", { class: "card" }, positionChart(ins.positions)),
+          sectionHead("Points left on the bench", ins.losses_bench_would_flip.length ? `Your bench would have won week${ins.losses_bench_would_flip.length > 1 ? "s" : ""} ${ins.losses_bench_would_flip.join(", ")}` : "Best possible lineup minus what you started"),
+          h("div", { class: "card" }, benchChart(ins.weeks)),
+        ]
+      : errors.insights
+        ? h("p", { class: "state error" }, errors.insights)
+        : loading(),
+  );
+}
+
 // ---------- MATCHUP ----------
 
 let lastPoints = new Map();
@@ -262,7 +381,7 @@ function liveRow(p, side) {
     h(
       "div",
       { class: "info" },
-      h("div", { class: "name" }, p.name, g.has_ball ? h("span", { class: "badge ball", title: "Has the ball" }, "🏈") : null, g.red_zone ? h("span", { class: "badge out" }, "RZ") : null),
+      h("div", { class: "name" }, h("span", { class: "full-name" }, p.name), h("span", { class: "short-name" }, shortName(p.name)), g.has_ball ? h("span", { class: "badge ball", title: "Has the ball" }, "🏈") : null, g.red_zone ? h("span", { class: "badge out" }, "RZ") : null),
       h("div", { class: "line" }, posTag(p.position), ` ${p.team || ""} · ${g.state === "bye" ? "Bye" : g.state === "pre" ? gameWhen({ state: "pre", start: g.start }) || g.detail : g.detail}`, g.opponent ? ` ${g.opponent}` : ""),
       p.stat_line ? h("div", { class: "line statline" }, p.stat_line) : null,
     ),
@@ -294,14 +413,67 @@ function gameCard(g) {
   );
 }
 
+function viewingMyLiveMatchup() {
+  const cur = S.summary?.week;
+  const myId = S.matchupView?.options?.find((o) => o.is_yours)?.matchup_id;
+  return (ui.mWeek == null || ui.mWeek === cur) && (ui.mId == null || ui.mId === myId);
+}
+
+async function loadMatchupView() {
+  const q = new URLSearchParams();
+  if (ui.mWeek != null) q.set("week", ui.mWeek);
+  if (ui.mId != null) q.set("id", ui.mId);
+  await load("matchupView", `matchup?${q}`);
+}
+
+function matchupBar() {
+  const v = S.matchupView;
+  const cur = S.summary?.week ?? v?.current_week;
+  const week = ui.mWeek ?? cur;
+  const first = v?.first_week ?? 1;
+  const go = (w) => {
+    ui.mWeek = w === cur ? null : w;
+    ui.mId = null;
+    loadMatchupView();
+    render();
+  };
+  return h(
+    "div",
+    { class: "mu-bar", role: "toolbar", "aria-label": "Choose week and matchup" },
+    h("button", { type: "button", class: "icon-btn", disabled: week <= first, "aria-label": "Previous week", onclick: () => go(week - 1) }, "‹"),
+    h("span", { class: "wk" }, `Week ${week ?? ""}`),
+    h("button", { type: "button", class: "icon-btn", disabled: week >= cur, "aria-label": "Next week", onclick: () => go(week + 1) }, "›"),
+    v?.options?.length
+      ? h(
+          "select",
+          {
+            class: "chip mu-select",
+            "aria-label": "Matchup",
+            onchange: (e) => {
+              const id = Number(e.target.value);
+              ui.mId = v.options.find((o) => o.matchup_id === id)?.is_yours ? null : id;
+              loadMatchupView();
+              render();
+            },
+          },
+          v.options.map((o) => h("option", { value: o.matchup_id, selected: o.matchup_id === v.matchup_id }, `${o.is_yours ? "★ " : ""}${o.label}`)),
+        )
+      : null,
+    sleeperButton("Open in Sleeper", "matchup"),
+  );
+}
+
 function renderMatchup(el) {
-  const d = S.live;
-  if (!d) return fill(el, errors.live ? h("p", { class: "state error" }, errors.live) : loading());
-  if (!d.me) return fill(el, h("p", { class: "state" }, "No matchup this week."));
+  const live = viewingMyLiveMatchup();
+  const d = live ? S.live : S.matchupView;
+  if (!d) return fill(el, errors.live ? h("p", { class: "state error" }, errors.live) : loading(), matchupBar());
+  if (!d.me) return fill(el, h("p", { class: "state" }, "No matchup this week."), matchupBar());
   const me = d.me;
   const opp = d.opponent;
-  const meInfo = teamInfo(me.roster_id);
-  const oppInfo = opp ? teamInfo(opp.roster_id) : null;
+  const meInfo = { ...teamInfo(me.roster_id), ...(me.avatar ? { avatar: me.avatar } : {}) };
+  const oppInfo = opp ? { ...teamInfo(opp.roster_id), ...(opp.avatar ? { avatar: opp.avatar } : {}) } : null;
+  const events = d.events || [];
+  const liveGames = d.games || [];
   const win = d.win_probability;
   const side = (s, info, right) =>
     h(
@@ -312,7 +484,7 @@ function renderMatchup(el) {
         "div",
         { style: { minWidth: "0" } },
         h("div", { class: "nm", title: s.team_name }, s.team_name),
-        h("div", { class: "rec" }, info?.record || ""),
+        h("div", { class: "mu-rec" }, info?.record || ""),
         h("div", { class: `big pts-${s.pace || "none"}` }, paceArrow(s.pace), s.points.toFixed(2)),
         h("div", { class: "projd" }, `proj. ${r1(s.projected_final)}`),
       ),
@@ -326,7 +498,7 @@ function renderMatchup(el) {
       h("div", { class: "mu-row" }, liveRow(a, "me"), h("div", { class: "center" }, slotPill((a || b).slot)), opp ? liveRow(b, "opp") : h("div")),
     );
   }
-  const started = d.games.filter((g) => g.state !== "pre");
+  const started = liveGames.filter((g) => g.state !== "pre");
   fill(
     el,
     h(
@@ -346,19 +518,20 @@ function renderMatchup(el) {
       ),
       opp ? side(opp, oppInfo, true) : h("div", { class: "mu-team right" }, h("div", { class: "muted" }, "Bye week")),
     ),
-    d.events.length
+    d.final ? h("p", { class: "yet" }, `Final · week ${d.week}`) : null,
+    events.length
       ? h(
           "ul",
           { class: "ticker", "aria-label": "Recent scoring" },
-          d.events.slice(0, 6).map((e) =>
+          events.slice(0, 6).map((e) =>
             h("li", { class: e.side === "mine" ? "good" : "bad" }, h("span", { class: "d" }, `${e.delta > 0 ? "+" : ""}${e.delta.toFixed(1)}`), e.name, h("span", { class: "muted" }, ` ${e.total.toFixed(1)}`)),
           ),
         )
       : null,
     started.length ? h("div", { class: "games" }, started.map(gameCard)) : null,
     h("div", { class: "mu-rows" }, rows),
-    sectionHead("League scores", `Week ${d.week}`),
-    renderScores(),
+    live ? [sectionHead("League scores", `Week ${d.week}`), renderScores()] : null,
+    matchupBar(),
   );
   lastPoints = new Map([
     ...me.starters.map((p) => [`me:${p.player_id}`, p.points]),
@@ -435,6 +608,7 @@ function renderTeam(el) {
       ? h(
           "div",
           { class: "tips" },
+          h("div", { class: "tips-head" }, h("span", { class: "muted" }, "Lineup changes are made in Sleeper"), sleeperButton("Set lineup in Sleeper", "team")),
           t.tips.map((tip) =>
             h(
               "div",
@@ -578,6 +752,7 @@ function renderWaivers(el) {
               h("div", {}, h("h4", {}, `Why drop ${last(m.drop.name)}`), h("ul", { class: "reasons" }, m.drop_reasons.map((r) => h("li", {}, r)))),
             ),
             m.cautions?.length ? h("div", { class: "caution" }, h("strong", {}, `Before you drop ${m.drop.name}:`), h("ul", {}, m.cautions.map((c) => h("li", {}, c)))) : null,
+            h("div", { class: "actions" }, sleeperButton(`Add ${m.add.name} in Sleeper`, "players")),
             h("details", { class: "more" }, h("summary", {}, "What the news and numbers say"), quotesBlock(m.add), quotesBlock(m.drop)),
           ),
         )
@@ -1031,6 +1206,7 @@ async function openSheet(id) {
         h("h2", {}, p.name, injuryBadge(p.injury_status)),
         h("div", { class: "line" }, posTag(p.position), ` · ${p.team || "FA"}${p.number ? ` #${p.number}` : ""}${p.age ? ` · Age ${p.age}` : ""}${p.years_exp != null ? ` · Yr ${p.years_exp + 1}` : ""}`),
         h("div", { class: "line" }, p.is_mine ? "On your team" : p.owner ? `Rostered by ${p.owner}` : "Free agent", p.injury_body_part ? ` · ${p.injury_body_part}` : ""),
+        h("div", { style: { marginTop: "8px" } }, sleeperButton(p.is_mine ? "Open my team in Sleeper" : p.owner ? "Trade in Sleeper" : "Add in Sleeper", p.is_mine ? "team" : p.owner ? "trades" : "players")),
       ),
     ),
     h(
@@ -1121,6 +1297,7 @@ document.addEventListener("keydown", (e) => {
 
 function renderHeader() {
   const s = S.summary;
+  if (s) document.getElementById("open-sleeper").href = sleeperUrl();
   if (s) {
     document.getElementById("league-name").textContent = s.league;
     document.title = `${s.league} · Week ${s.week}`;
@@ -1169,7 +1346,7 @@ function renderHeader() {
 
 // ---------- render + tabs ----------
 
-const VIEWS = { matchup: renderMatchup, team: renderTeam, waivers: renderWaivers, league: renderLeague, trade: renderTrade, news: renderNews };
+const VIEWS = { home: renderHome, matchup: renderMatchup, team: renderTeam, waivers: renderWaivers, league: renderLeague, trade: renderTrade, news: renderNews };
 const TABS = [...Object.keys(VIEWS), "players"];
 
 let renderQueued = false;
@@ -1197,7 +1374,7 @@ function render() {
 }
 
 function showTab(name) {
-  if (!TABS.includes(name)) name = "matchup";
+  if (!TABS.includes(name)) name = "home";
   ui.tab = name;
   document.getElementById("app").classList.toggle("show-pane", name === "players");
   for (const b of document.querySelectorAll("[data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab === name));
@@ -1250,6 +1427,8 @@ async function refreshAll() {
     load("odds"),
     load("standings"),
     load("transactions"),
+    load("insights"),
+    loadMatchupView(),
     ...["live", "activity", "advice", "news", "values", "outlook"].map((k) => load(k)),
   ]);
   refreshBtn.disabled = false;
@@ -1278,6 +1457,7 @@ function openStream() {
         lastLiveRefetch = Date.now();
         load("team");
         load("matchups");
+        if (!viewingMyLiveMatchup() && (ui.mWeek == null || ui.mWeek === S.summary?.week)) loadMatchupView();
       }
       if (topic === "advice") load("players");
       render();

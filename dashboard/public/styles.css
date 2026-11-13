@@ -31,6 +31,12 @@
   --sflex: linear-gradient(90deg, var(--qb) 0 25%, var(--wr) 25% 50%, var(--rb) 50% 75%, var(--te) 75%);
 
   --radius: 16px;
+
+  /* chart marks, validated against the dark surface (dataviz validator) */
+  --chart-a: #0ea68b;
+  --chart-neg: #e63e62;
+  --chart-ref: #5d6580;
+  --chart-grid: #232a42;
   --font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
@@ -48,6 +54,7 @@ html {
 
 body {
   margin: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background: var(--bg);
   color: var(--text);
   font: 15px/1.4 var(--font);
@@ -947,7 +954,7 @@ select.chip {
   white-space: nowrap;
 }
 
-.mu-team .rec {
+.mu-team .mu-rec {
   font-size: 0.78rem;
   color: var(--muted);
 }
@@ -2044,5 +2051,372 @@ th.po {
     border-top: 1px solid var(--border);
     border-radius: 20px 20px 0 0;
     padding: 16px 16px 32px;
+  }
+}
+
+/* ---------- Home: tiles, recommendations ---------- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tile small {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.tile b {
+  font-size: 1.45rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile span {
+  font-size: 0.74rem;
+  color: var(--text-2);
+}
+
+.recs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.rec {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  cursor: default;
+}
+
+.rec[role="button"] {
+  cursor: pointer;
+}
+
+.rec.warn {
+  border-left-color: var(--warn);
+}
+
+.rec.info {
+  border-left-color: var(--wr);
+}
+
+.rec-kind {
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  width: 64px;
+  flex: none;
+}
+
+.rec-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+}
+
+.rec-gain {
+  font-weight: 800;
+  color: var(--accent);
+  white-space: nowrap;
+  font-size: 0.86rem;
+}
+
+.sleeper-btn {
+  display: inline-block;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #08261f;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+  flex: none;
+}
+
+.sleeper-btn:hover {
+  filter: brightness(1.08);
+}
+
+a.icon-btn {
+  text-decoration: none;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tips-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+/* ---------- Matchup bottom bar ---------- */
+.mu-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px -24px -40px;
+  padding: 10px 24px calc(10px + env(safe-area-inset-bottom));
+  background: rgb(13 16 32 / 0.94);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+}
+
+.mu-bar .wk {
+  font-weight: 800;
+  min-width: 70px;
+  text-align: center;
+}
+
+.mu-bar .icon-btn {
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 6px 12px;
+}
+
+.mu-bar .icon-btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mu-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 420px;
+  text-overflow: ellipsis;
+}
+
+.mu-bar .sleeper-btn {
+  margin-left: auto;
+}
+
+/* ---------- Charts ---------- */
+.chart-wrap {
+  position: relative;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart .grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.chart .zero {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.chart .axis {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.chart .axis.strong {
+  fill: var(--text-2);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.chart .lbl {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chart .lbl.muted {
+  fill: var(--muted);
+}
+
+.chart .line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart .line.a {
+  stroke: var(--chart-a);
+}
+
+.chart .line.ref {
+  stroke: var(--chart-ref);
+}
+
+.chart .dot.a {
+  fill: var(--chart-a);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.chart .dot.a.hollow {
+  fill: var(--surface);
+  stroke: var(--chart-a);
+  stroke-width: 2;
+}
+
+.chart .bar.a {
+  fill: var(--chart-a);
+}
+
+.chart .bar.neg {
+  fill: var(--chart-neg);
+}
+
+.chart .cross {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.chart .hit {
+  fill: transparent;
+}
+
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  color: var(--text-2);
+  white-space: nowrap;
+  z-index: 3;
+}
+
+.chart-tip strong {
+  color: var(--text);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 0.76rem;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+
+.legend-row .key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.swatch.line-a,
+.swatch.line-ref {
+  height: 3px;
+  border-radius: 2px;
+}
+
+.swatch.line-a,
+.swatch.bar-a {
+  background: var(--chart-a);
+}
+
+.swatch.line-ref {
+  background: var(--chart-ref);
+}
+
+.swatch.bar-neg {
+  background: var(--chart-neg);
+}
+
+.chart-table {
+  margin-top: 6px;
+  font-size: 0.8rem;
+}
+
+.chart-table summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+@media (max-width: 700px) {
+  .mu-bar {
+    margin: 14px -14px -32px;
+    padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+  }
+  .mu-select {
+    order: 5;
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .rec {
+    flex-wrap: wrap;
+  }
+  .rec-kind {
+    width: auto;
+  }
+  .rec-text {
+    flex-basis: 100%;
+    order: 3;
+  }
+}
+
+.short-name {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .mu-row .full-name {
+    display: none;
+  }
+  .mu-row .short-name {
+    display: inline;
   }
 }

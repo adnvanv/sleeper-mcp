@@ -99,7 +99,7 @@ const URLS = {
   espnSearch: (name: string) =>
     `https://site.web.api.espn.com/apis/common/v3/search?limit=5&type=player&query=${encodeURIComponent(name)}`,
   playerNews: (espnId: string) =>
-    `https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=8&playerId=${espnId}`,
+    `https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=6&playerId=${espnId}`,
   projections: (season: string, week: number) =>
     `https://api.sleeper.app/v1/projections/nfl/regular/${season}/${week}`,
   weekStats: (season: string, week: number) =>
@@ -167,6 +167,7 @@ export class FeedPoller extends EventEmitter {
   private espnIds = new Map<string, string>();
   private espnLookups = new Map<string, number>(); // last failed search time
   private outlooks = new Map<string, Outlook>();
+  private newsCheckedAt = new Map<string, number>();
   /** Activity per ESPN game id, for the current week. */
   private plays = new Map<string, ActivityItem[]>();
   private finishedGames = new Set<string>();
@@ -341,43 +342,54 @@ export class FeedPoller extends EventEmitter {
 
     // News for each of your players (and the advisor's top pickups) straight
     // from ESPN's per-player fantasy feed, which carries Rotowire's blurbs.
+    // Rolling: every minute, the players whose news is stalest (your roster
+    // first, then the advisor's top pickups). Each of your players is checked
+    // every ~3 minutes; the Rotowire feed above catches breaking news sooner.
     this.define(
       "player-news",
-      () => (fast() ? 2 * MIN : live() || this.gameToday() ? 3 * MIN : 10 * MIN),
+      () => (fast() ? 45 * SEC : MIN),
       async () => {
         const data = await this.league();
         const roster = findRosterForUser(data.rosters, this.opts.userId);
-        const ids = [...new Set([...(roster?.players || []), ...this.addTargets])];
+        const mineIds = roster?.players || [];
+        const candidates = [...new Set([...mineIds, ...this.addTargets])];
+        const batch = live() || this.gameToday() ? 8 : 6;
+        const ids = candidates
+          .sort((a, b) => (this.newsCheckedAt.get(a) || 0) - (this.newsCheckedAt.get(b) || 0) ||
+            Number(mineIds.includes(b)) - Number(mineIds.includes(a)))
+          .slice(0, batch);
         const fresh: NewsItem[] = [];
         const errors: string[] = [];
-        for (let i = 0; i < ids.length; i += 4) {
-          await Promise.all(
-            ids.slice(i, i + 4).map(async (id) => {
-              const p = data.players.get(id);
-              if (!p) return;
-              const espnId = await this.espnIdFor(id, p);
-              if (!espnId) return;
-              try {
-                const json = await fetchJson<{ feed?: [] }>(URLS.playerNews(espnId));
-                fresh.push(...parseEspnPlayerNews(json, id, p.last_name || ""));
-              } catch (error) {
-                errors.push(error instanceof Error ? error.message : String(error));
-              }
-            }),
-          );
-        }
+        await Promise.all(
+          ids.map(async (id) => {
+            const p = data.players.get(id);
+            if (!p) return;
+            this.newsCheckedAt.set(id, Date.now());
+            const espnId = await this.espnIdFor(id, p);
+            if (!espnId) return;
+            try {
+              const json = await fetchJson<{ feed?: [] }>(URLS.playerNews(espnId));
+              fresh.push(...parseEspnPlayerNews(json, id, p.last_name || ""));
+            } catch (error) {
+              errors.push(error instanceof Error ? error.message : String(error));
+            }
+          }),
+        );
         if (!fresh.length && errors.length) throw new Error(errors[0]);
+        const before = new Set(this.news.map((n) => n.id));
         this.news = mergeNews(this.news, fresh);
-        await this.saveNews();
-        this.publishNews(data);
-        await this.publishAdvice(data);
+        if (this.news.some((n) => !before.has(n.id))) {
+          await this.saveNews();
+          this.publishNews(data);
+          await this.publishAdvice(data);
+        }
       },
     );
 
     // Breaking news. Inactives and practice reports matter most on game days.
     this.define(
       "news",
-      () => (live() || this.gameToday() ? 2 * MIN : 5 * MIN),
+      () => (live() || this.gameToday() ? MIN : 2 * MIN),
       async () => {
         const data = await this.league();
         const index = this.playerIndex(data);

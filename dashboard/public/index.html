@@ -2,11 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0d1020" />
     <title>League</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="League" />
     <link rel="stylesheet" href="styles.css" />
     <script type="module" src="app.js"></script>
   </head>
@@ -20,9 +26,11 @@
             <div class="league-meta">
               <span id="status" class="pill" aria-live="polite"></span>
               <button id="refresh" type="button" class="icon-btn">Refresh</button>
+              <a class="icon-btn hide-sm" id="open-sleeper" href="https://sleeper.com" target="_blank" rel="noopener noreferrer">Sleeper</a>
             </div>
           </div>
           <nav class="tabs" role="tablist" aria-label="Sections">
+            <button type="button" role="tab" data-tab="home">Home</button>
             <button type="button" role="tab" data-tab="matchup">Matchup</button>
             <button type="button" role="tab" data-tab="team">Team</button>
             <button type="button" role="tab" data-tab="waivers">Waivers</button>
@@ -39,7 +47,8 @@
         </div>
 
         <div class="main-views">
-          <section class="view" data-view="matchup" aria-label="Matchup"></section>
+          <section class="view" data-view="home" aria-label="Home"></section>
+          <section class="view" data-view="matchup" aria-label="Matchup" hidden></section>
           <section class="view" data-view="team" aria-label="Team" hidden></section>
           <section class="view" data-view="waivers" aria-label="Waivers" hidden></section>
           <section class="view" data-view="league" aria-label="League" hidden></section>

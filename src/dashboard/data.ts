@@ -18,7 +18,7 @@ import {
 } from "../season.js";
 import type { NFLGame, SleeperMatchup, SleeperPlayer } from "../types.js";
 import { FeedPoller, type Topic } from "../feeds/poller.js";
-import { AVATAR_URL, userAvatar, playerView, playersIndex, playoffOdds, teamView } from "./views.js";
+import { AVATAR_URL, userAvatar, insightsView, matchupView, playerView, playersIndex, playoffOdds, teamView } from "./views.js";
 
 const LIVE_SCHEDULE_MS = 5 * 60 * 1000;
 const RISKY = new Set(["Out", "IR", "Doubtful", "Suspended", "PUP"]);
@@ -313,6 +313,10 @@ export const panels = {
   }),
   players: viewPanel((st) => playersIndex(st)),
   odds: viewPanel((st) => playoffOdds(st)),
+  insights: viewPanel((st) => insightsView(st)),
+  matchup: viewPanel((st, q) =>
+    matchupView(st, q.get("week") ? Number(q.get("week")) : undefined, q.get("id") ? Number(q.get("id")) : undefined),
+  ),
 } as const;
 
 export type PanelName = keyof typeof panels;

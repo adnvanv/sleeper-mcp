@@ -568,3 +568,189 @@ export async function playoffOdds(st: State) {
     teams: rows,
   };
 }
+
+// ---------- insights (analytics) ----------
+
+const SLOT_GROUP: Record<string, string> = {
+  QB: "QB", RB: "RB", WR: "WR", TE: "TE", K: "K", DEF: "DEF",
+  FLEX: "FLEX", WRRB_FLEX: "FLEX", REC_FLEX: "FLEX", SUPER_FLEX: "SFLEX",
+};
+
+/**
+ * Season analytics for your team: weekly score vs your opponent and the
+ * league median, points left on the bench (best possible lineup minus what
+ * you started), and points by starting position vs the league average.
+ */
+export async function insightsView(st: State) {
+  const data = await st.league();
+  const mine = findRosterForUser(data.rosters, st.userId);
+  if (!mine) throw new Error("You are not in this league");
+  const slots = startingSlots(data.league.roster_positions);
+  const positionsOf = (id: string) => playerPositions(data.players.get(id));
+
+  const weekly = data.weeks.map((w) => {
+    const scores = w.matchups.map((m) => m.points || 0).sort((a, b) => a - b);
+    const mid = scores.length ? (scores[Math.floor((scores.length - 1) / 2)] + scores[Math.ceil((scores.length - 1) / 2)]) / 2 : 0;
+    const me = w.matchups.find((m) => m.roster_id === mine.roster_id);
+    const opp = me ? w.matchups.find((m) => m.matchup_id === me.matchup_id && m.roster_id !== me.roster_id) : undefined;
+    const points = me?.points || 0;
+    const best = me
+      ? optimalLineup(me.players || [], data.league.roster_positions, (id) => me.players_points?.[id] ?? 0, positionsOf).total
+      : 0;
+    const oppRoster = opp ? data.rosters.find((r) => r.roster_id === opp.roster_id) : undefined;
+    return {
+      week: w.week,
+      points: r1(points),
+      opponent_points: opp ? r1(opp.points || 0) : null,
+      opponent: oppRoster ? teamName(oppRoster, data.users.find((u) => u.user_id === oppRoster.owner_id)) : null,
+      median: r1(mid),
+      result: !opp ? null : points > (opp.points || 0) ? "W" : points < (opp.points || 0) ? "L" : "T",
+      rank: scores.length - scores.filter((s) => s <= points).length + 1,
+      teams: scores.length,
+      best_lineup: r1(best),
+      bench_left: r1(Math.max(0, best - points)),
+    };
+  });
+
+  // Points by starting-slot group, per week, you vs the league average.
+  const sumGroup = (m: (typeof data.weeks)[number]["matchups"][number]) => {
+    const out: Record<string, number> = {};
+    (m.starters_points || []).forEach((pts, i) => {
+      const g = SLOT_GROUP[slots[i]];
+      if (g) out[g] = (out[g] || 0) + (pts || 0);
+    });
+    return out;
+  };
+  const mineTotals: Record<string, number> = {};
+  const leagueTotals: Record<string, number> = {};
+  let teamWeeks = 0;
+  for (const w of data.weeks) {
+    for (const m of w.matchups) {
+      const g = sumGroup(m);
+      for (const [k, v] of Object.entries(g)) {
+        leagueTotals[k] = (leagueTotals[k] || 0) + v;
+        if (m.roster_id === mine.roster_id) mineTotals[k] = (mineTotals[k] || 0) + v;
+      }
+    }
+    teamWeeks += w.matchups.length;
+  }
+  const nWeeks = data.weeks.length || 1;
+  const order = ["QB", "RB", "WR", "TE", "FLEX", "SFLEX", "K", "DEF"];
+  const positions = order
+    .filter((g) => leagueTotals[g] != null)
+    .map((g) => {
+      const you = (mineTotals[g] || 0) / nWeeks;
+      const league = (leagueTotals[g] || 0) / Math.max(1, teamWeeks);
+      return { group: g, you: r1(you), league: r1(league), diff: r1(you - league) };
+    });
+
+  const totalPoints = weekly.reduce((s, w) => s + w.points, 0);
+  const totalBest = weekly.reduce((s, w) => s + w.best_lineup, 0);
+  return {
+    weeks: weekly,
+    positions,
+    efficiency: totalBest ? Math.round((totalPoints / totalBest) * 1000) / 10 : null,
+    bench_left_total: r1(weekly.reduce((s, w) => s + w.bench_left, 0)),
+    avg_points: weekly.length ? r1(totalPoints / weekly.length) : null,
+    avg_median: weekly.length ? r1(weekly.reduce((s, w) => s + w.median, 0) / weekly.length) : null,
+    losses_bench_would_flip: weekly.filter((w) => w.result === "L" && w.opponent_points != null && w.best_lineup > w.opponent_points).map((w) => w.week),
+  };
+}
+
+// ---------- any matchup, any week ----------
+
+/**
+ * One matchup in any week, in the same shape as the live feed's sides, plus
+ * the list of every matchup that week for the selector. The current week is
+ * live (projections, game state, pace); past weeks are final scores with each
+ * player's stat line.
+ */
+export async function matchupView(st: State, weekArg?: number, matchupArg?: number) {
+  const data = await st.league();
+  const current = data.currentWeek;
+  const start = data.league.settings.start_week || 1;
+  const week = Math.max(start, Math.min(weekArg || current, current));
+  const matchups = (await sleeperClient.getMatchups(st.leagueId, week, week < current ? 60 * 60 * 1000 : undefined)) || [];
+  const mine = findRosterForUser(data.rosters, st.userId);
+  const groups = new Map<number, typeof matchups>();
+  for (const m of matchups) {
+    if (m.matchup_id == null) continue;
+    groups.set(m.matchup_id, [...(groups.get(m.matchup_id) || []), m]);
+  }
+  const nameOf = (rid: number) => {
+    const r = data.rosters.find((x) => x.roster_id === rid);
+    return r ? teamName(r, data.users.find((u) => u.user_id === r.owner_id)) : `Team ${rid}`;
+  };
+  const avatarOf = (rid: number) => {
+    const r = data.rosters.find((x) => x.roster_id === rid);
+    return userAvatar(r ? data.users.find((u) => u.user_id === r.owner_id) : null);
+  };
+  const myGroup = [...groups.entries()].find(([, ms]) => ms.some((m) => m.roster_id === mine?.roster_id));
+  const id = matchupArg && groups.has(matchupArg) ? matchupArg : myGroup?.[0] ?? [...groups.keys()][0];
+  const pair = (groups.get(id) || []).sort((a, b) => Number(b.roster_id === mine?.roster_id) - Number(a.roster_id === mine?.roster_id));
+  const slots = startingSlots(data.league.roster_positions);
+
+  const { liveSide, winProbability } = await import("../feeds/live.js");
+  const byTeam = gamesByTeam(st.games);
+  const proj = new Map<string, number>();
+  if (week === current) {
+    for (const [pid, v] of st.weekProjections.get(week) || []) proj.set(pid, v * adjustFactor(pid, { projections: st.weekProjections, outlooks: st.outlooks } as never));
+  }
+  const statsFor = (pid: string) => st.weeklyRows.find((r) => r.player_id === pid && r.week === week);
+  const side = (m: (typeof matchups)[number]) => {
+    if (week === current) {
+      const s = liveSide({ matchup: m, teamName: nameOf(m.roster_id), slots, players: data.players, byTeam, projections: proj, stats: st.liveStats });
+      return { ...s, avatar: avatarOf(m.roster_id), is_you: m.roster_id === mine?.roster_id };
+    }
+    const starters = (m.starters || []).flatMap((pid, i) => {
+      if (!pid || pid === "0") return [];
+      const p = data.players.get(pid);
+      const row = statsFor(pid);
+      const pts = m.players_points?.[pid] ?? 0;
+      return [{
+        player_id: pid,
+        name: name(p, pid),
+        position: p?.position || null,
+        team: row?.team || p?.team || null,
+        slot: slots[i] || "FLEX",
+        points: r1(pts),
+        projected: null,
+        projected_final: r1(pts),
+        pace: null,
+        stat_line: statLine(row?.stats, p?.position),
+        game: { state: "post", detail: "Final", start: null, opponent: row?.opponent ? `vs ${row.opponent}` : null, has_ball: false, red_zone: false },
+      }];
+    });
+    return {
+      roster_id: m.roster_id,
+      team_name: nameOf(m.roster_id),
+      avatar: avatarOf(m.roster_id),
+      is_you: m.roster_id === mine?.roster_id,
+      points: r1(m.points || 0),
+      projected_final: r1(m.points || 0),
+      pace: null,
+      playing_now: 0,
+      yet_to_play: 0,
+      starters,
+    };
+  };
+  const a = pair[0] ? side(pair[0]) : null;
+  const b = pair[1] ? side(pair[1]) : null;
+  return {
+    week,
+    current_week: current,
+    first_week: start,
+    matchup_id: id,
+    final: week < current,
+    me: a,
+    opponent: b,
+    win_probability: week === current && a && b ? winProbability(a as never, b as never) : null,
+    options: [...groups.entries()]
+      .sort(([x], [y]) => x - y)
+      .map(([mid, ms]) => ({
+        matchup_id: mid,
+        is_yours: ms.some((m) => m.roster_id === mine?.roster_id),
+        label: ms.map((m) => `${nameOf(m.roster_id)} ${r1(m.points || 0)}`).join(" vs "),
+      })),
+  };
+}
