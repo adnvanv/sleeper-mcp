@@ -284,6 +284,7 @@ export const panels = {
   roster: getRoster,
   "free-agents": getFreeAgents,
   transactions: getTransactions,
+  activity: feedPanel("activity"),
   live: feedPanel("live"),
   news: feedPanel("news"),
   usage: feedPanel("usage"),

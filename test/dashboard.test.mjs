@@ -46,7 +46,7 @@ test("serves the dashboard page with security headers", async () => {
     /default-src 'self'/,
   );
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
-  assert.match(await res.text(), /<main class="grid">/);
+  assert.match(await res.text(), /<nav class="tabs"/);
 });
 
 test("serves static assets with the right type", async () => {
@@ -100,6 +100,7 @@ test("read-only: non-GET methods are rejected", async () => {
 
 test("real dashboard exposes the expected panels", () => {
   assert.deepEqual(Object.keys(panels).sort(), [
+    "activity",
     "feeds",
     "free-agents",
     "live",

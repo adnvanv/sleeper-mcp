@@ -11,6 +11,7 @@ const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k 
 
 /** Server-sent event topic → panel name. */
 export const feedTopics = {
+  activity: "activity",
   live: "live",
   news: "news",
   usage: "usage",
@@ -36,6 +37,57 @@ function chipGroup(container, options, current, onPick) {
           onclick: () => onPick(key),
         },
         label,
+      ),
+    ),
+  );
+}
+
+// ---------- Activity stream ----------
+
+function shortTime(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString([], { weekday: "short" });
+}
+
+function renderActivity(data, { body, note, section }) {
+  section.classList.toggle("is-live", data.live);
+  note.textContent = data.live ? "Live · your players are on the field" : "Plays and news for your players";
+  if (!data.items.length) {
+    fill(body, h("p", { class: "state" }, "Nothing yet this week. Plays show up here as soon as your players' games start."));
+    return;
+  }
+  fill(
+    body,
+    h(
+      "ul",
+      { class: "act-list" },
+      data.items.slice(0, 40).map((a, i) =>
+        h(
+          "li",
+          { class: [a.kind, i === 0 ? "latest" : "", a.scoring ? "scoring" : ""].join(" ").trim() },
+          h("span", { class: "act-when", title: new Date(a.at).toLocaleString() }, shortTime(a.at)),
+          h(
+            "span",
+            { class: "act-head" },
+            a.name,
+            a.starter ? null : h("span", { class: "bench-tag" }, "BN"),
+            " ",
+            h("span", { class: "what" }, a.kind === "news" ? "News" : a.headline),
+          ),
+          h("span", { class: "act-when act-clock" }, a.clock || a.team || ""),
+          h(
+            "span",
+            { class: "act-detail", title: a.kind === "news" ? a.headline : a.detail },
+            a.kind === "news"
+              ? a.url
+                ? h("a", { href: a.url, target: "_blank", rel: "noopener noreferrer" }, a.headline)
+                : a.headline
+              : a.detail,
+          ),
+        ),
       ),
     ),
   );
@@ -692,6 +744,7 @@ function renderFeeds(data, { body, note }) {
 }
 
 export const feedRenderers = {
+  activity: renderActivity,
   live: renderLive,
   news: renderNews,
   usage: renderUsage,

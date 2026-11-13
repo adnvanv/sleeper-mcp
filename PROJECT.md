@@ -364,6 +364,7 @@ and is read with a generic User-Agent.
 | Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
 | Projections | Sleeper `/v1/projections/nfl/regular/{season}/{week}` | Projected finals and win chance, re-scored with your league settings |
 | Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
+| Play-by-play | ESPN game summary API | Activity stream: every play involving one of your players |
 | Player news | Rotowire NFL RSS, ESPN news API | News tagged mine / league / free agent and returning / injury / role / move |
 | Weekly stats | Sleeper `/stats/nfl/{season}/{week}` | Snap, target and carry share; points allowed by defense |
 | Trade values | FantasyCalc `/values/current` | Redraft values matched to your league's format |
@@ -397,6 +398,16 @@ up the most = easiest). Each of your players gets the rank for every remaining
 opponent through the fantasy playoffs, plus averages for rest of season and
 playoffs.
 
+**Activity stream** (top of the page, on every tab) lists each play that
+involves one of your rostered players, plus news about them, newest first.
+ESPN play text names players as "J.Chase", "Ja.Chase" or "A.St. Brown", and
+only the newest play carries athlete IDs, so players are matched by ESPN ID
+when present and otherwise by that pattern, only within their own game. The
+headline is from your player's side ("Completion · 11 yds" for the passer,
+"Catch · 11 yds" for the receiver) and ignores the part of a play that a
+replay reversed. Play-by-play is fetched every 6 s while one of your players
+is on and the page is open (30 s without), and finished games only once.
+
 **Win chance** treats each starter's remaining projection as uncertain (a
 standard deviation of 60% of what's left, plus a small floor) and compares
 the two projected finals with a normal approximation. It's a rough guide.
@@ -417,13 +428,17 @@ the two projected finals with a normal approximation. It's a rough guide.
   Monday night, Saturdays in December and January, and Friday nights in
   September), and every 15 minutes otherwise. A hidden browser tab isn't
   polled; it catches up when shown again.
-- **Theme:** colors are CSS variables with light and dark sets. It follows
-  the system by default, and the Theme button cycles auto/light/dark (saved
-  in localStorage when available).
+- **Tabs:** Live (your matchup, league scores), My team (roster, schedule
+  strength, news), Players (usage risers, trending free agents), League
+  (standings, moves) and Trades (values and calculator). The tab is kept in
+  the URL hash (`#team`), so it survives a reload and can be bookmarked. The
+  activity stream stays above the tabs.
+- **Theme:** dark only, in the style of the Sleeper mobile app (navy
+  surfaces, mint accent), as CSS variables in `styles.css`.
 - **Responsive:** on wide screens there are two independent column stacks, so
-  there are no gaps. Under 960px it's one column in priority order (matchups,
-  roster, standings, free agents, moves). Under 600px, secondary columns are
-  hidden and the page never scrolls sideways (checked at 375px).
+  there are no gaps. Under 960px each tab is one column (main panel first).
+  The tab bar sticks to the top while scrolling. Under 600px, secondary
+  columns are hidden and the page never scrolls sideways (checked at 375px).
 
 ## 9. Testing
 
@@ -431,7 +446,7 @@ the two projected finals with a normal approximation. It's a rough guide.
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 102 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), live stream |
+| `test/*.test.mjs` (node:test) | 106 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out

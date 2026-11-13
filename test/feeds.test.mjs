@@ -422,3 +422,98 @@ test("trade values map by Sleeper ID and FantasyCalc params match the league", (
     "isDynasty=false&numQbs=1&numTeams=12&ppr=0.5",
   );
 });
+
+// ---------- Activity ----------
+
+import {
+  effectiveText,
+  mergeActivity,
+  newsActivity,
+  playActivity,
+  playHeadline,
+  playNamePattern,
+  summaryPlays,
+} from "../dist/feeds/activity.js";
+
+test("play name patterns match ESPN's abbreviations", () => {
+  const chase = playNamePattern({ first_name: "Ja'Marr", last_name: "Chase" });
+  assert.ok(chase.test("J.Burrow pass short right to J.Chase for 12 yards"));
+  assert.ok(chase.test("pass to Ja.Chase for 5 yards"));
+  assert.ok(!chase.test("pass to K.Chase for 5 yards"));
+  assert.ok(!chase.test("pass to J.Chasen for 5 yards"));
+  const asb = playNamePattern({ first_name: "Amon-Ra", last_name: "St. Brown" });
+  assert.ok(asb.test("pass short left to A.St. Brown to DET 40"));
+  const walker = playNamePattern({ first_name: "Kenneth", last_name: "Walker III" });
+  assert.ok(walker.test("K.Walker left end for 7 yards"));
+});
+
+test("play headlines read from the player's side and respect replay reversals", () => {
+  const goff = playNamePattern({ first_name: "Jared", last_name: "Goff" });
+  const lap = playNamePattern({ first_name: "Sam", last_name: "LaPorta" });
+  const rec = { type: { text: "Pass Reception" }, text: "J.Goff pass short middle to S.LaPorta to DET 40 for 11 yards (X.Y)." };
+  assert.equal(playHeadline(rec, goff), "Completion · 11 yds");
+  assert.equal(playHeadline(rec, lap), "Catch · 11 yds");
+  const td = { type: { text: "Passing Touchdown" }, text: "J.Goff pass short right to S.LaPorta for 3 yards, TOUCHDOWN." };
+  assert.equal(playHeadline(td, goff), "TD pass · 3 yds");
+  assert.equal(playHeadline(td, lap), "Receiving TD · 3 yds");
+  const reversed = {
+    type: { text: "Pass Incompletion" },
+    text: "J.Goff pass to S.LaPorta for 14 yards. Challenged, and the play was REVERSED. J.Goff pass incomplete short left to S.LaPorta.",
+  };
+  assert.equal(effectiveText(reversed.text), "J.Goff pass incomplete short left to S.LaPorta.");
+  assert.equal(playHeadline(reversed, goff), "Incompletion");
+  assert.equal(playHeadline(reversed, lap), "Target · incomplete");
+  assert.equal(
+    playHeadline({ type: { text: "Rush" }, text: "D.Montgomery up the middle for -1 yards" }),
+    "Rush · -1 yd",
+  );
+});
+
+test("activity picks plays for your players by name or ESPN ID", () => {
+  const summary = {
+    drives: {
+      previous: [
+        {
+          plays: [
+            { id: "p1", text: "J.Goff pass to S.LaPorta for 9 yards", type: { text: "Pass Reception" }, period: { number: 1 }, clock: { displayValue: "10:00" }, wallclock: "2026-11-15T18:10:00Z" },
+            { id: "p2", text: "D.Montgomery left end for 4 yards", type: { text: "Rush" }, period: { number: 1 }, clock: { displayValue: "9:20" }, wallclock: "2026-11-15T18:11:00Z" },
+          ],
+        },
+      ],
+      current: {
+        plays: [
+          { id: "p3", text: "Pass to someone", type: { text: "Pass Reception" }, participants: [{ athlete: { id: "999" } }], period: { number: 2 }, clock: { displayValue: "1:00" }, wallclock: "2026-11-15T18:30:00Z", scoringPlay: true },
+          { id: "p3", text: "duplicate", wallclock: "2026-11-15T18:30:00Z" },
+        ],
+      },
+    },
+  };
+  const plays = summaryPlays(summary);
+  assert.equal(plays.length, 3);
+  const roster = [
+    { player_id: "L", player: { first_name: "Sam", last_name: "LaPorta", position: "TE", team: "DET", espn_id: 999 }, starter: true },
+    { player_id: "D", player: { first_name: "Detroit", last_name: "Lions", position: "DEF", team: "DET" }, starter: true },
+  ];
+  const items = playActivity(plays, roster, "2026-11-15T18:00:00Z");
+  assert.deepEqual(items.map((i) => i.id), ["play:p1:L", "play:p3:L"]);
+  assert.equal(items[0].headline, "Catch · 9 yds");
+  assert.equal(items[0].clock, "Q1 10:00");
+  assert.equal(items[1].scoring, true);
+});
+
+test("activity merges plays and news about your players, newest first", () => {
+  const news = [
+    { id: "n1", relevance: "mine", title: "LaPorta: Full practice", summary: "", url: "u", published: "2026-11-14T00:00:00Z", players: [{ player_id: "L", name: "Sam LaPorta", position: "TE", team: "DET", owner: "Me" }] },
+    { id: "n2", relevance: "league", title: "Other", published: "2026-11-16T00:00:00Z", players: [] },
+  ];
+  const fromNews = newsActivity(news, new Set(["L"]), new Set());
+  assert.equal(fromNews.length, 1);
+  assert.equal(fromNews[0].starter, false);
+  const merged = mergeActivity([
+    ...fromNews,
+    { id: "a", at: "2026-11-15T18:00:00Z" },
+    { id: "b", at: "2026-11-15T18:00:00Z" },
+    { id: "a", at: "2026-11-15T18:00:00Z" },
+  ]);
+  assert.deepEqual(merged.map((m) => m.id), ["a", "b", "news:n1"]);
+});

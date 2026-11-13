@@ -559,35 +559,38 @@ document.addEventListener("visibilitychange", () => {
 });
 refreshBtn.addEventListener("click", refreshAll);
 
-// ---------- Theme toggle (auto / light / dark) ----------
+// ---------- Tabs ----------
 
-const themeBtn = document.getElementById("theme");
-const THEMES = ["auto", "light", "dark"];
+const TABS = ["live", "team", "players", "league", "trades"];
+const tabButtons = [...document.querySelectorAll("[data-tab]")];
 
-function readTheme() {
-  try {
-    return localStorage.getItem("theme") || "auto";
-  } catch {
-    return "auto";
+function showTab(name, focus = false) {
+  if (!TABS.includes(name)) name = "live";
+  for (const btn of tabButtons) {
+    const on = btn.dataset.tab === name;
+    btn.setAttribute("aria-selected", String(on));
+    btn.tabIndex = on ? 0 : -1;
+    if (on && focus) btn.focus();
   }
+  for (const view of document.querySelectorAll("[data-view]")) {
+    view.hidden = view.dataset.view !== name;
+  }
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
 }
 
-function applyTheme(theme) {
-  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", theme);
-  themeBtn.textContent = `Theme: ${theme}`;
+for (const btn of tabButtons) {
+  btn.addEventListener("click", () => showTab(btn.dataset.tab));
+  btn.addEventListener("keydown", (e) => {
+    const i = TABS.indexOf(btn.dataset.tab);
+    if (e.key === "ArrowRight") showTab(TABS[(i + 1) % TABS.length], true);
+    else if (e.key === "ArrowLeft") showTab(TABS[(i + TABS.length - 1) % TABS.length], true);
+    else return;
+    e.preventDefault();
+  });
 }
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+showTab(location.hash.slice(1));
 
-themeBtn.addEventListener("click", () => {
-  const next = THEMES[(THEMES.indexOf(readTheme()) + 1) % THEMES.length];
-  try {
-    localStorage.setItem("theme", next);
-  } catch {
-    // storage unavailable: theme just won't persist
-  }
-  applyTheme(next);
-});
 
-applyTheme(readTheme());
 refreshAll();
 openStream();

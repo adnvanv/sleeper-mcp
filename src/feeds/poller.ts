@@ -31,6 +31,14 @@ import {
   type ScoreEvent,
 } from "./live.js";
 import {
+  mergeActivity,
+  newsActivity,
+  playActivity,
+  summaryPlays,
+  type ActivityItem,
+  type EspnSummary,
+} from "./activity.js";
+import {
   buildPlayerIndex,
   mergeNews,
   parseEspnNews,
@@ -38,6 +46,7 @@ import {
   tagNews,
   type NewsItem,
   type PlayerIndex,
+  type TaggedNewsItem,
 } from "./news.js";
 import {
   fantasyCalcParams,
@@ -65,6 +74,8 @@ const URLS = {
     regular
       ? `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`
       : "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+  summary: (eventId: string) =>
+    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${eventId}`,
   espnNews: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=50",
   rotowire: "https://www.rotowire.com/rss/news.php?sport=NFL",
   liveStats: (season: string, week: number) =>
@@ -78,7 +89,7 @@ const URLS = {
 };
 
 export type Mode = "fast" | "game_day" | "idle";
-export type Topic = "live" | "news" | "usage" | "outlook" | "values" | "status";
+export type Topic = "activity" | "live" | "news" | "usage" | "outlook" | "values" | "status";
 
 export interface Snapshot {
   data: unknown;
@@ -124,6 +135,11 @@ export class FeedPoller extends EventEmitter {
   };
   private events: ScoreEvent[] = [];
   private values = new Map<string, TradeValue>();
+  private taggedNews: TaggedNewsItem[] = [];
+  /** Activity per ESPN game id, for the current week. */
+  private plays = new Map<string, ActivityItem[]>();
+  private finishedGames = new Set<string>();
+  private playsWeek = 0;
 
   constructor(opts: PollerOptions) {
     super();
@@ -212,6 +228,45 @@ export class FeedPoller extends EventEmitter {
             URLS.liveStats(data.league.season, data.currentWeek),
           )) || {};
         await this.publishLive();
+      },
+    );
+
+    // Play-by-play for games with any of your rostered players: the activity
+    // stream. ~250 KB per game, so it runs fast only while someone watches.
+    this.define(
+      "plays",
+      () => (fast() ? (watched() ? 6 * SEC : 30 * SEC) : live() ? MIN : 10 * MIN),
+      async () => {
+        const data = await this.league();
+        if (this.playsWeek !== data.currentWeek) {
+          this.plays.clear();
+          this.finishedGames.clear();
+          this.playsWeek = data.currentWeek;
+        }
+        const roster = findRosterForUser(data.rosters, this.opts.userId);
+        const starters = new Set(roster?.starters || []);
+        const mine = (roster?.players || []).flatMap((id) => {
+          const player = data.players.get(id);
+          return player ? [{ player_id: id, player, starter: starters.has(id) }] : [];
+        });
+        const teams = new Set(mine.map((m) => m.player.team).filter(Boolean));
+        const games = this.games.filter(
+          (g) =>
+            g.state !== "pre" &&
+            !this.finishedGames.has(g.id) &&
+            (teams.has(g.home.team) || teams.has(g.away.team)),
+        );
+        await Promise.all(
+          games.map(async (g) => {
+            const summary = await fetchJson<EspnSummary>(URLS.summary(g.id));
+            const inGame = mine.filter(
+              (m) => m.player.team === g.home.team || m.player.team === g.away.team,
+            );
+            this.plays.set(g.id, playActivity(summaryPlays(summary), inGame, g.start));
+            if (g.state === "post") this.finishedGames.add(g.id);
+          }),
+        );
+        this.publishActivity(data);
       },
     );
 
@@ -483,12 +538,28 @@ export class FeedPoller extends EventEmitter {
     return owners;
   }
 
+  private publishActivity(data: LeagueData) {
+    const roster = findRosterForUser(data.rosters, this.opts.userId);
+    const mine = new Set(roster?.players || []);
+    const starters = new Set(roster?.starters || []);
+    const items = mergeActivity([
+      ...[...this.plays.values()].flat(),
+      ...newsActivity(this.taggedNews, mine, starters),
+    ]);
+    this.publish("activity", {
+      live: this.mode() === "fast",
+      items,
+    });
+  }
+
   private publishNews(data: LeagueData) {
     const tagged = tagNews(this.news, {
       mine: new Set(this.myPlayerIds(data)),
       owners: this.owners(data),
       players: data.players,
     });
+    this.taggedNews = tagged;
+    this.publishActivity(data);
     this.publish("news", {
       items: tagged.slice(0, 200),
       counts: {
