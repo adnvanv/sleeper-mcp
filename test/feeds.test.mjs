@@ -615,7 +615,7 @@ test("advisor finds the swap that raises ROS starting points and explains it", (
   assert.equal(best.ros_gain, 7);
   assert.equal(best.playoff_gain, 0);
   assert.equal(best.add.on_waivers_until, "2026-11-14T08:00:00Z");
-  assert.match(best.add_reasons.join(" "), /Projects 10 pts a game/);
+  assert.match(best.add_reasons.join(" "), /Expect 10 pts a game/);
   assert.match(best.add_reasons.join(" "), /5K Sleeper managers added him/);
   // FreeQB is a backup behind a better QB: no gain, so not suggested
   assert.ok(!result.moves.some((m) => m.add.player_id === "f2"));
@@ -632,4 +632,134 @@ test("drop candidates rank by what each player adds to your lineups", () => {
     ["q1", 60, "keep"],
   ]);
   assert.match(drops[0].reasons.join(" "), /Adds only 3 starting points/);
+});
+
+// ---------- Signals: news reading, games played, adjusted outlook ----------
+
+import { readNews, quoteAround, outlook, playedGames, pointsPerOpportunity } from "../dist/feeds/signals.js";
+import { usageDirection } from "../dist/feeds/advisor.js";
+
+const DELL_NEWS = [
+  {
+    id: "a",
+    source: "Rotowire",
+    title: "Dell (hand) was limited in Wednesday's practice, Mary Kay Cabot of The Cleveland Plain Dealer reports.",
+    summary:
+      "Dell operated as the Texans' third receiver for much of last Sunday's 44-22 win over the Chargers, running 22 routes on C.J. Stroud's 38 dropbacks. In just his second game since Week 16 of the 2024 campaign, Dell turned nine targets into five catches for 104 yards and a touchdown.",
+    published: "2026-11-11T22:42:49Z",
+    player_ids: ["9502"],
+  },
+  {
+    id: "b",
+    source: "Rotowire",
+    title: "Dell (knee) is active for Sunday's game against the Giants.",
+    summary: "Dell is ready to take the field for the first time since Dec. 21, 2024, but he'll likely be eased into the action.",
+    published: "2026-10-25T17:00:00Z",
+    player_ids: ["9502"],
+  },
+];
+
+test("reads return, practice, role, routes and ramp-up from news text", () => {
+  const s = readNews(DELL_NEWS, new Date("2026-11-13T00:00:00Z"));
+  assert.equal(s.returned, true);
+  assert.equal(s.practice, "limited");
+  assert.equal(s.role_rank, 3);
+  assert.equal(s.route_share, 0.58);
+  assert.equal(s.ramping, true);
+  assert.equal(s.out, false);
+  assert.ok(s.quotes.some((q) => q.text.includes("running 22 routes on C.J. Stroud's 38 dropbacks.")));
+  assert.ok(s.quotes.every((q) => !q.text.endsWith("..")));
+  // old news doesn't count
+  assert.equal(readNews(DELL_NEWS, new Date("2027-01-01T00:00:00Z")).returned, false);
+});
+
+test("quotes keep initials inside a sentence", () => {
+  const text = "First sentence. He ran routes on C.J. Stroud's dropbacks. Last one.";
+  assert.equal(quoteAround(text, text.indexOf("routes")), "He ran routes on C.J. Stroud's dropbacks.");
+});
+
+test("games played skip weeks a player was inactive, and usage is valued per position", () => {
+  const rows = [
+    { player_id: "d", week: 5, team: "HOU", stats: { gms_active: 1 } }, // on IR
+    { player_id: "d", week: 7, team: "HOU", stats: { gms_active: 1, off_snp: 14, tm_off_snp: 61, rec_tgt: 1, rec: 1, rec_yd: 43 } },
+    { player_id: "d", week: 9, team: "HOU", stats: { gms_active: 1, off_snp: 33, tm_off_snp: 70, rec_tgt: 9, rec: 4, rec_yd: 105, rec_td: 1 } },
+  ];
+  const scoring = { rec: 0.5, rec_yd: 0.1, rec_td: 6 };
+  const ppo = pointsPerOpportunity(rows, () => "WR", scoring);
+  assert.equal(ppo.get("WR").per_target, 2.33); // (4.8 + 18.5) / 10
+  const games = playedGames(rows, "WR", scoring, ppo);
+  assert.deepEqual(games.map((g) => g.week), [7, 9]);
+  assert.equal(games[1].points, 18.5);
+  assert.equal(games[1].snap_share, 0.47);
+  assert.equal(games[1].expected_points, 21);
+});
+
+const GAMES = [
+  { week: 7, points: 5, snap_share: 0.23, targets: 1, carries: 0, expected_points: 1.3 },
+  { week: 9, points: 18.5, snap_share: 0.47, targets: 9, carries: 0, expected_points: 12.7 },
+];
+const quiet = { returned: false, practice: null, role_rank: null, route_share: null, ramping: false, out: false, quotes: [] };
+
+test("outlook leans on recent usage more when the market agrees", () => {
+  const market = { adds_24h: 0, add_rank: null, drops_24h: 0, drop_rank: null };
+  const base = outlook({ name: "D", position: "WR", projectedPpg: 5.1, games: GAMES, news: quiet, market });
+  assert.equal(base.recent_weight, 0.3); // 2 games
+  const hot = outlook({
+    name: "D",
+    position: "WR",
+    projectedPpg: 5.1,
+    games: GAMES,
+    news: readNews(DELL_NEWS, new Date("2026-11-13T00:00:00Z")),
+    market: { adds_24h: 133800, add_rank: 17, drops_24h: 0, drop_rank: null },
+    seasonWeeks: 9,
+  });
+  // 0.3 for two games, +0.2 market, +0.1 back from injury, -0.1 WR3 role
+  assert.equal(hot.recent_weight, 0.5);
+  assert.ok(hot.adjusted_ppg > base.adjusted_ppg);
+  assert.ok(hot.adjusted_ppg > 5.1 && hot.adjusted_ppg < hot.recent_ppg);
+  assert.ok(hot.hold_flags.some((f) => /133\.8K adds/.test(f)));
+  assert.ok(hot.notes.some((n) => /Back from injury: 2 games/.test(n)));
+  // a regular who just "returned to action" after a week off isn't back from injury
+  const regular = outlook({
+    name: "C", position: "WR", projectedPpg: 15, games: [...GAMES, ...GAMES, ...GAMES, GAMES[0]],
+    news: { ...quiet, returned: true }, market, seasonWeeks: 9,
+  });
+  assert.ok(!regular.notes.some((n) => /Back from injury/.test(n)));
+  // still sidelined (last game weeks ago) isn't "back" either
+  const sidelined = outlook({ name: "M", position: "RB", projectedPpg: 9, games: [{ ...GAMES[0], week: 5 }], news: { ...quiet, returned: true }, market, seasonWeeks: 9 });
+  assert.ok(!sidelined.notes.some((n) => /Back from injury/.test(n)));
+  // QBs lean on the projection
+  const qb = outlook({ name: "Q", position: "QB", projectedPpg: 19, games: GAMES, news: quiet, market: { adds_24h: 90000, add_rank: 5, drops_24h: 0, drop_rank: null } });
+  assert.ok(qb.recent_weight <= 0.25);
+  // no projection at all: use recent usage
+  assert.equal(outlook({ name: "D", position: "WR", projectedPpg: null, games: GAMES, news: quiet, market }).adjusted_ppg, base.recent_ppg);
+});
+
+test("advisor uses the adjusted estimate instead of the raw projection", () => {
+  const input = advisorLeague();
+  // r3 is barely projected but has been used heavily: recent usage says 6 a game
+  input.outlooks = new Map([
+    ["r3", { projected_ppg: 3, adjusted_ppg: 6, notes: ["n"], hold_flags: ["Other managers are chasing him"], news: { quotes: [] } }],
+  ]);
+  const result = advise(input);
+  const r3 = result.drops.find((d) => d.player.player_id === "r3");
+  assert.equal(r3.player.ros_ppg, 6);
+  assert.equal(r3.player.projected_ppg, 3);
+  assert.notEqual(r3.verdict, "drop");
+  assert.ok(r3.reasons.some((r) => r.startsWith("Hold? ")));
+  // FreeRB still covers the week-2 bye better, but by 4 points, not 7
+  assert.equal(result.moves[0].drop.player_id, "r3");
+  assert.equal(result.moves[0].ros_gain, 4);
+  assert.deepEqual(result.moves[0].cautions, ["Other managers are chasing him"]);
+  // and an absurd gap is capped at 2.5x the projection
+  input.outlooks.get("r3").adjusted_ppg = 30;
+  assert.equal(advise(input).drops.find((d) => d.player.player_id === "r3").player.ros_ppg, 7.5);
+});
+
+test("usage direction separates growing, shrinking and mixed roles", () => {
+  const u = (snap, opp) => ({ change: { snap_share: snap, opportunities: opp } });
+  assert.equal(usageDirection(u(0.2, 3)), "up");
+  assert.equal(usageDirection(u(-0.17, -4)), "down");
+  assert.equal(usageDirection(u(-0.17, 3.2)), "mixed");
+  assert.equal(usageDirection(u(0.01, 0.5)), null);
 });

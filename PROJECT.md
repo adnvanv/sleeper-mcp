@@ -424,6 +424,38 @@ starting points your lineups lose without each one (under 3 = drop, under 12
 The advisor reruns whenever projections, news, weekly stats or values update
 (projections every 15-30 minutes).
 
+**Beyond projections** (`feeds/signals.ts`). Sleeper's projections are slow
+to react to a player returning from injury or a new role, so each player gets
+an adjusted points-a-game estimate:
+
+- **Games actually played.** Weeks on IR or inactive are skipped. The last
+  three games are weighted toward the newest (and more so when snap share
+  jumped), using half actual points and half "expected points": targets and
+  carries times what a target or carry is worth at that position this season
+  in league scoring, so one long touchdown doesn't run the estimate.
+- **Reading the news.** Recent blurbs (21 days) are scanned for a return from
+  a long absence ("first game since", "activated from IR"), this week's
+  practice status, the role the writer describes ("third receiver", "lead
+  back"), routes per dropback, team-high targets and "eased in" ramp-ups. The
+  matching sentences are kept as quotes and shown in the app. A return only
+  counts if he missed 3+ games and has played in the last two weeks.
+- **The market.** Sleeper-wide adds and drops in the last 24 hours, with rank.
+- **The blend.** Recent usage gets 15% weight per game played (up to 45%),
+  +20% when the market is chasing him (top-50 adds), +10% for a return or
+  ramp-up, −10% for a WR3-type role after a spike, capped at 75% (25% for QB,
+  K and DEF, whose scores swing on game script). The advisor scales each
+  weekly projection by adjusted ÷ projected (between 0.3× and 2.5×), so byes
+  and matchups keep their shape.
+- **Hold flags.** A player the market is chasing, whose recent role is well
+  above his projection, or who is being eased back from injury gets a "think
+  twice" warning, is never marked "drop" on the numbers alone, and the
+  warning appears on any move that would drop him.
+
+**ESPN IDs.** Sleeper lacks an ESPN ID for some players (Tank Dell, for
+one), which used to mean no per-player news. IDs now come from Sleeper, then
+FantasyCalc's mapping, then ESPN's player search (exact name), cached in
+`.cache/espn-ids.json`.
+
 **Per-player news.** On top of the league-wide feeds, the poller asks ESPN's
 fantasy news API for each of your players and the advisor's top ten pickups
 (every 10 minutes, 3 on game days, 2 while your players are on). Those items
@@ -480,7 +512,7 @@ the two projected finals with a normal approximation. It's a rough guide.
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 110 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 116 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out

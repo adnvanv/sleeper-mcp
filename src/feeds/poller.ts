@@ -33,6 +33,13 @@ import {
 } from "./live.js";
 import { advise, type PlayerNewsBrief } from "./advisor.js";
 import {
+  outlook as buildOutlook,
+  playedGames,
+  pointsPerOpportunity,
+  readNews,
+  type Outlook,
+} from "./signals.js";
+import {
   mergeActivity,
   newsActivity,
   playActivity,
@@ -69,6 +76,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(__dirname, "..", "..", ".cache");
 const NEWS_FILE = join(CACHE_DIR, "news.json");
+const ESPN_IDS_FILE = join(CACHE_DIR, "espn-ids.json");
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -88,6 +96,8 @@ const URLS = {
   currentProjections: (season: string, week: number) =>
     `https://api.sleeper.app/projections/nfl/${season}/${week}?season_type=regular` +
     ["QB", "RB", "WR", "TE", "K", "DEF"].map((p) => `&position[]=${p}`).join(""),
+  espnSearch: (name: string) =>
+    `https://site.web.api.espn.com/apis/common/v3/search?limit=5&type=player&query=${encodeURIComponent(name)}`,
   playerNews: (espnId: string) =>
     `https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=8&playerId=${espnId}`,
   projections: (season: string, week: number) =>
@@ -153,6 +163,10 @@ export class FeedPoller extends EventEmitter {
   private usageMap = new Map<string, UsageTrend>();
   private allowed: ReturnType<typeof pointsAllowed> = new Map();
   private addTargets: string[] = [];
+  /** Sleeper ID → ESPN ID where Sleeper's database has none (FantasyCalc, ESPN search). */
+  private espnIds = new Map<string, string>();
+  private espnLookups = new Map<string, number>(); // last failed search time
+  private outlooks = new Map<string, Outlook>();
   /** Activity per ESPN game id, for the current week. */
   private plays = new Map<string, ActivityItem[]>();
   private finishedGames = new Set<string>();
@@ -339,10 +353,12 @@ export class FeedPoller extends EventEmitter {
         for (let i = 0; i < ids.length; i += 4) {
           await Promise.all(
             ids.slice(i, i + 4).map(async (id) => {
-              const p = data.players.get(id) as (SleeperPlayer & { espn_id?: string | number }) | undefined;
-              if (!p?.espn_id) return;
+              const p = data.players.get(id);
+              if (!p) return;
+              const espnId = await this.espnIdFor(id, p);
+              if (!espnId) return;
               try {
-                const json = await fetchJson<{ feed?: [] }>(URLS.playerNews(String(p.espn_id)));
+                const json = await fetchJson<{ feed?: [] }>(URLS.playerNews(espnId));
                 fresh.push(...parseEspnPlayerNews(json, id, p.last_name || ""));
               } catch (error) {
                 errors.push(error instanceof Error ? error.message : String(error));
@@ -399,6 +415,10 @@ export class FeedPoller extends EventEmitter {
         URLS.fantasyCalc(fantasyCalcParams(data.league, data.rosters.length)),
       );
       this.values = tradeValues(rows || []);
+      for (const r of rows || []) {
+        const espnId = (r.player as { espnId?: string | null }).espnId;
+        if (r.player.sleeperId && espnId) this.espnIds.set(String(r.player.sleeperId), String(espnId));
+      }
       this.publishValues(data);
       await this.publishAdvice(data);
     });
@@ -772,6 +792,58 @@ export class FeedPoller extends EventEmitter {
     return Math.min(18, (data.league.settings.playoff_week_start || 15) + 2);
   }
 
+  // ---------- ESPN IDs ----------
+
+  /**
+   * ESPN ID for a Sleeper player: Sleeper's own field, else FantasyCalc's
+   * mapping, else ESPN's player search (exact name + team), cached on disk.
+   */
+  private async espnIdFor(id: string, p: SleeperPlayer): Promise<string | null> {
+    const own = (p as SleeperPlayer & { espn_id?: string | number | null }).espn_id;
+    if (own) return String(own);
+    if (!this.espnIds.size) await this.loadEspnIds();
+    const known = this.espnIds.get(id);
+    if (known) return known;
+    if (Date.now() - (this.espnLookups.get(id) || 0) < 24 * HOUR) return null;
+    const name = `${p.first_name} ${p.last_name}`.trim();
+    try {
+      const json = await fetchJson<{ items?: { id: string; displayName?: string; league?: string }[] }>(
+        URLS.espnSearch(name),
+      );
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+      const hit = (json.items || []).find(
+        (x) => x.league === "nfl" && x.displayName && norm(x.displayName) === norm(name),
+      );
+      if (hit) {
+        this.espnIds.set(id, String(hit.id));
+        await this.saveEspnIds();
+        return String(hit.id);
+      }
+    } catch {
+      // try again tomorrow
+    }
+    this.espnLookups.set(id, Date.now());
+    return null;
+  }
+
+  private async loadEspnIds() {
+    try {
+      const saved = JSON.parse(await fs.readFile(ESPN_IDS_FILE, "utf-8")) as Record<string, string>;
+      for (const [k, v] of Object.entries(saved)) if (!this.espnIds.has(k)) this.espnIds.set(k, v);
+    } catch {
+      // none yet
+    }
+  }
+
+  private async saveEspnIds() {
+    try {
+      await fs.mkdir(CACHE_DIR, { recursive: true });
+      await fs.writeFile(ESPN_IDS_FILE, JSON.stringify(Object.fromEntries(this.espnIds)));
+    } catch {
+      // cache only
+    }
+  }
+
   // ---------- waiver advice ----------
 
   private adviceBusy = false;
@@ -829,9 +901,15 @@ export class FeedPoller extends EventEmitter {
         candidates.map((id) => [id, byeOfTeam.get(data.players.get(id)!.team!) ?? null] as const),
       );
 
-      // Sleeper-wide adds (cached 5 minutes in the client)
-      const trending = await sleeperClient.getTrendingPlayers("add", 24, 200).catch(() => []);
+      // Sleeper-wide adds and drops (cached 5 minutes in the client)
+      const [trending, dropping] = await Promise.all([
+        sleeperClient.getTrendingPlayers("add", 24, 300).catch(() => []),
+        sleeperClient.getTrendingPlayers("drop", 24, 300).catch(() => []),
+      ]);
       const trendingAdds = new Map(trending.map((t) => [String(t.player_id), t.count]));
+      const addRank = new Map(trending.map((t, i) => [String(t.player_id), i + 1]));
+      const dropCount = new Map(dropping.map((t) => [String(t.player_id), t.count]));
+      const dropRank = new Map(dropping.map((t, i) => [String(t.player_id), i + 1]));
 
       // latest news per player
       const news = new Map<string, PlayerNewsBrief>();
@@ -858,6 +936,45 @@ export class FeedPoller extends EventEmitter {
         }
       }
 
+      // News, games actually played and market signals → adjusted outlook
+      const newsByPlayer = new Map<string, NewsItem[]>();
+      for (const n of this.news) {
+        for (const id of n.player_ids) newsByPlayer.set(id, [...(newsByPlayer.get(id) || []), n]);
+      }
+      const rowsByPlayer = new Map<string, WeeklyRow[]>();
+      for (const r of this.weeklyRows) rowsByPlayer.set(r.player_id, [...(rowsByPlayer.get(r.player_id) || []), r]);
+      const ppo = pointsPerOpportunity(this.weeklyRows, (id) => data.players.get(id)?.position, scoring);
+      const outlooks = new Map<string, Outlook>();
+      const now = new Date();
+      const seasonWeeks = new Set(this.weeklyRows.map((r) => r.week)).size;
+      for (const id of new Set([...candidates, ...trendingAdds.keys()])) {
+        const p = data.players.get(id);
+        if (!p?.position) continue;
+        const raw: number[] = [];
+        for (let w = fromWeek; w <= throughWeek; w++) {
+          const v = this.weekProjections.get(w)?.get(id) ?? 0;
+          if (v > 0) raw.push(v);
+        }
+        outlooks.set(
+          id,
+          buildOutlook({
+            name: `${p.first_name} ${p.last_name}`,
+            position: p.position,
+            projectedPpg: raw.length ? Math.round((raw.reduce((a, b) => a + b, 0) / raw.length) * 10) / 10 : null,
+            games: playedGames(rowsByPlayer.get(id) || [], p.position, scoring, ppo),
+            news: readNews(newsByPlayer.get(id) || [], now),
+            seasonWeeks,
+            market: {
+              adds_24h: trendingAdds.get(id) || 0,
+              add_rank: addRank.get(id) ?? null,
+              drops_24h: dropCount.get(id) || 0,
+              drop_rank: dropRank.get(id) ?? null,
+            },
+          }),
+        );
+      }
+      this.outlooks = outlooks;
+
       const values = new Map([...this.values.entries()].map(([id, v]) => [id, v.value]));
       const result = advise({
         fromWeek,
@@ -877,6 +994,7 @@ export class FeedPoller extends EventEmitter {
         values,
         news,
         waivers,
+        outlooks,
       });
       this.addTargets = result.moves.slice(0, 10).map((m) => m.add.player_id);
       const waiverType = (data.league.settings as { waiver_type?: number }).waiver_type;

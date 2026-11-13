@@ -18,6 +18,7 @@ import { optimalLineup, playerPositions, startingSlots } from "../season.js";
 import type { SleeperPlayer } from "../types.js";
 import type { NewsKind } from "./news.js";
 import type { UsageTrend } from "./analysis.js";
+import type { Outlook } from "./signals.js";
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -53,6 +54,8 @@ export interface AdvisorInput {
   news: Map<string, PlayerNewsBrief>;
   /** Players dropped recently, still on waivers: player_id → clears at (ISO). */
   waivers: Map<string, string>;
+  /** News, recent usage and market signals, with an adjusted points-a-game estimate. */
+  outlooks?: Map<string, Outlook>;
   now?: Date;
 }
 
@@ -63,7 +66,10 @@ export interface PlayerCard {
   team: string | null;
   injury_status: string | null;
   ros_points: number;
+  /** Adjusted points a game (projection blended with recent usage). */
   ros_ppg: number | null;
+  /** Sleeper's raw projection, points a game. */
+  projected_ppg: number | null;
   ros_games: number;
   next_week: number | null;
   season_ppg: number | null;
@@ -76,6 +82,9 @@ export interface PlayerCard {
   value: number;
   news: PlayerNewsBrief | null;
   on_waivers_until: string | null;
+  notes: string[];
+  hold_flags: string[];
+  quotes: { source: string; date: string; text: string }[];
 }
 
 export interface Move {
@@ -86,6 +95,8 @@ export interface Move {
   next_week_gain: number;
   add_reasons: string[];
   drop_reasons: string[];
+  /** Reasons to think twice before dropping. */
+  cautions: string[];
 }
 
 export interface DropCandidate {
@@ -115,10 +126,28 @@ function weekList(from: number, through: number): number[] {
   return out;
 }
 
+/**
+ * Multiplier from Sleeper's projection to the adjusted estimate, so weekly
+ * projections keep their shape (byes, matchups) but move to the new level.
+ */
+export function adjustFactor(id: string, input: AdvisorInput): number {
+  const o = input.outlooks?.get(id);
+  if (!o || o.adjusted_ppg == null || !o.projected_ppg) return 1;
+  return Math.max(0.3, Math.min(2.5, o.adjusted_ppg / o.projected_ppg));
+}
+
+/** Projected points for a player in a week, adjusted. */
+export function weekValue(id: string, week: number, input: AdvisorInput): number {
+  const base = input.projections.get(week)?.get(id) ?? 0;
+  return base ? base * adjustFactor(id, input) : 0;
+}
+
 export function buildCard(id: string, input: AdvisorInput): PlayerCard {
   const p = input.players.get(id);
   const weeks = weekList(input.fromWeek, input.throughWeek);
-  const proj = weeks.map((w) => input.projections.get(w)?.get(id) ?? 0);
+  const raw = weeks.map((w) => input.projections.get(w)?.get(id) ?? 0);
+  const rawGames = raw.filter((v) => v > 0).length;
+  const proj = weeks.map((w) => weekValue(id, w, input));
   const games = proj.filter((v) => v > 0).length;
   const ros = proj.reduce((a, b) => a + b, 0);
   const hist = input.history.get(id);
@@ -133,10 +162,9 @@ export function buildCard(id: string, input: AdvisorInput): PlayerCard {
     injury_status: input.injuries.has(id) ? input.injuries.get(id) || null : p?.injury_status || null,
     ros_points: r1(ros),
     ros_ppg: games ? r1(ros / games) : null,
+    projected_ppg: rawGames ? r1(raw.reduce((a, b) => a + b, 0) / rawGames) : null,
     ros_games: games,
-    next_week: input.projections.get(input.fromWeek)?.has(id)
-      ? r1(input.projections.get(input.fromWeek)!.get(id)!)
-      : null,
+    next_week: input.projections.get(input.fromWeek)?.has(id) ? r1(weekValue(id, input.fromWeek, input)) : null,
     season_ppg: avg(played.map(([, pts]) => pts)),
     last3_ppg: avg(played.slice(-3).map(([, pts]) => pts)),
     snap_share: usage?.recent.snap_share ?? null,
@@ -147,6 +175,9 @@ export function buildCard(id: string, input: AdvisorInput): PlayerCard {
     value: input.values.get(id) || 0,
     news: input.news.get(id) || null,
     on_waivers_until: input.waivers.get(id) || null,
+    notes: input.outlooks?.get(id)?.notes || [],
+    hold_flags: input.outlooks?.get(id)?.hold_flags || [],
+    quotes: input.outlooks?.get(id)?.news.quotes || [],
   };
 }
 
@@ -155,8 +186,7 @@ export function lineupByWeek(ids: string[], input: AdvisorInput): Map<number, nu
   const positions = (id: string) => playerPositions(input.players.get(id));
   const out = new Map<number, number>();
   for (const w of weekList(input.fromWeek, input.throughWeek)) {
-    const proj = input.projections.get(w);
-    out.set(w, optimalLineup(ids, input.rosterPositions, (id) => proj?.get(id) ?? 0, positions).total);
+    out.set(w, optimalLineup(ids, input.rosterPositions, (id) => weekValue(id, w, input), positions).total);
   }
   return out;
 }
@@ -173,6 +203,17 @@ function startablePositions(rosterPositions: string[]): Set<string> {
   return new Set(startingSlots(rosterPositions).flatMap((s) => map[s] || []));
 }
 
+/** Is a player's role clearly growing, shrinking, or moving both ways? */
+export function usageDirection(u?: UsageTrend): "up" | "down" | "mixed" | null {
+  if (!u) return null;
+  const snap = u.change.snap_share ?? 0;
+  const opp = u.change.opportunities;
+  const up = snap >= 0.08 || opp >= 2;
+  const down = snap <= -0.08 || opp <= -2;
+  if (up && down) return "mixed";
+  return up ? "up" : down ? "down" : null;
+}
+
 const fmtAdds = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}K` : String(n));
 const daysAgo = (iso: string, now: Date) => (now.getTime() - Date.parse(iso)) / 86400000;
 
@@ -181,9 +222,15 @@ function addReasons(add: PlayerCard, drop: PlayerCard, input: AdvisorInput, usag
   const out: string[] = [];
   if (add.ros_ppg != null) {
     out.push(
-      `Projects ${add.ros_ppg} pts a game the rest of the way (${add.ros_games} games)` +
-        (drop.ros_ppg != null ? ` vs ${drop.ros_ppg} for ${drop.name}` : ""),
+      `Expect ${add.ros_ppg} pts a game the rest of the way (${add.ros_games} games)` +
+        (drop.ros_ppg != null ? ` vs ${drop.ros_ppg} for ${drop.name}` : "") +
+        (add.projected_ppg != null && Math.abs(add.projected_ppg - add.ros_ppg) >= 1
+          ? `; Sleeper projects ${add.projected_ppg}, adjusted for recent usage`
+          : ""),
     );
+  }
+  for (const n of add.notes) {
+    if (/Back from injury|Last game|Ran a route|No\. \d option/.test(n)) out.push(n);
   }
   if (add.ros_games > drop.ros_games) {
     out.push(
@@ -191,9 +238,9 @@ function addReasons(add: PlayerCard, drop: PlayerCard, input: AdvisorInput, usag
         (drop.bye_week != null && drop.bye_week >= input.fromWeek ? ` (bye week ${drop.bye_week})` : ""),
     );
   }
-  if (usage && usage.reason && (usage.change.opportunities >= 2 || (usage.change.snap_share ?? 0) >= 0.08)) {
-    out.push(`Role growing: ${usage.reason} (last 2 games vs before)`);
-  }
+  const dir = usageDirection(usage);
+  if (usage?.reason && dir === "up") out.push(`Role growing: ${usage.reason} (last 2 games vs before)`);
+  else if (usage?.reason && dir === "mixed") out.push(`Usage mixed: ${usage.reason} (last 2 games vs before)`);
   if (add.last3_ppg != null && add.season_ppg != null && add.last3_ppg >= add.season_ppg + 2) {
     out.push(`Heating up: ${add.last3_ppg} pts a game over his last 3 vs ${add.season_ppg} on the season`);
   }
@@ -203,11 +250,11 @@ function addReasons(add: PlayerCard, drop: PlayerCard, input: AdvisorInput, usag
   if (add.playoff_rank != null && add.playoff_rank <= 10) {
     out.push(`Soft playoff schedule: opponents average rank ${add.playoff_rank} of 32 vs his position in weeks ${input.playoffStart}+`);
   }
-  if (add.trending_adds >= 1000) out.push(`${fmtAdds(add.trending_adds)} Sleeper managers added him in the last 24h`);
+  if (add.trending_adds >= 1000 && !add.notes.some((n) => n.includes("Sleeper adds"))) out.push(`${fmtAdds(add.trending_adds)} Sleeper managers added him in the last 24h`);
   if (add.value > drop.value + 300) {
     out.push(`Higher trade value (FantasyCalc ${add.value.toLocaleString()} vs ${drop.value.toLocaleString()})`);
   }
-  return out.slice(0, 5);
+  return out.slice(0, 6);
 }
 
 function dropReasons(drop: PlayerCard, contribution: number, input: AdvisorInput, usage?: UsageTrend): string[] {
@@ -222,11 +269,13 @@ function dropReasons(drop: PlayerCard, contribution: number, input: AdvisorInput
   out.push(
     contribution < 1
       ? "Wouldn't make your best lineup in any remaining week"
-      : `Adds only ${r1(contribution)} starting points to your lineup the rest of the season`,
+      : contribution < 12
+        ? `Adds only ${r1(contribution)} starting points to your lineup the rest of the season`
+        : `Adds ${r1(contribution)} starting points the rest of the season; the replacement adds more`,
   );
-  if (usage && ((usage.change.snap_share ?? 0) <= -0.08 || usage.change.opportunities <= -2) && usage.reason) {
-    out.push(`Role shrinking: ${usage.reason}`);
-  }
+  const dir = usageDirection(usage);
+  if (usage?.reason && dir === "down") out.push(`Role shrinking: ${usage.reason} (last 2 games vs before)`);
+  else if (usage?.reason && dir === "mixed") out.push(`Usage mixed: ${usage.reason} (last 2 games vs before)`);
   if (drop.last3_ppg != null && drop.season_ppg != null && drop.last3_ppg <= drop.season_ppg - 2) {
     out.push(`Cooling off: ${drop.last3_ppg} pts a game over his last 3 vs ${drop.season_ppg} on the season`);
   }
@@ -268,7 +317,7 @@ export function advise(input: AdvisorInput, options: { candidates?: number; move
   }
   const rosOf = (id: string) => {
     let t = 0;
-    for (let w = input.fromWeek; w <= input.throughWeek; w++) t += input.projections.get(w)?.get(id) ?? 0;
+    for (let w = input.fromWeek; w <= input.throughWeek; w++) t += weekValue(id, w, input);
     return t;
   };
   const byPos = new Map<string, string[]>();
@@ -309,6 +358,7 @@ export function advise(input: AdvisorInput, options: { candidates?: number; move
       next_week_gain: r1(best.next),
       add_reasons: addReasons(a, d, input, input.usage.get(add)),
       drop_reasons: dropReasons(d, contribution.get(best.drop)?.ros ?? 0, input, input.usage.get(best.drop)),
+      cautions: d.hold_flags,
     });
   }
   moves.sort((a, b) => b.ros_gain - a.ros_gain);
@@ -316,15 +366,20 @@ export function advise(input: AdvisorInput, options: { candidates?: number; move
   const drops: DropCandidate[] = input.myIds
     .map((id) => {
       const c = contribution.get(id)!;
-      const verdict: DropCandidate["verdict"] = c.ros < 3 ? "drop" : c.ros < 12 ? "expendable" : "keep";
+      let verdict: DropCandidate["verdict"] = c.ros < 3 ? "drop" : c.ros < 12 ? "expendable" : "keep";
+      const flags = card(id).hold_flags;
+      if (flags.length && verdict === "drop") verdict = "expendable"; // the numbers may be behind
       return {
         player: card(id),
         ros_contribution: r1(c.ros),
         playoff_contribution: r1(c.po),
         verdict,
-        reasons: verdict === "keep"
-          ? [`Adds ${r1(c.ros)} starting points the rest of the season (${r1(c.po)} in the playoffs)`]
-          : dropReasons(card(id), c.ros, input, input.usage.get(id)),
+        reasons: [
+          ...(verdict === "keep"
+            ? [`Adds ${r1(c.ros)} starting points the rest of the season (${r1(c.po)} in the playoffs)`]
+            : dropReasons(card(id), c.ros, input, input.usage.get(id))),
+          ...flags.map((f) => `Hold? ${f}`),
+        ],
       };
     })
     .sort((a, b) => a.ros_contribution - b.ros_contribution);

@@ -1334,3 +1334,56 @@ table.compare th[scope="row"] {
     font-size: 0.78rem;
   }
 }
+
+.caution {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.86rem;
+}
+
+.caution ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.caution.small {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+  margin-top: 6px;
+}
+
+.drops .caution li,
+.drops .quotes li {
+  display: list-item;
+  border: 0;
+  padding: 0;
+}
+
+.intel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 20px;
+  margin: 8px 0;
+}
+
+.intel h5 {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+}
+
+.quotes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.84rem;
+}
+
+.quotes li {
+  margin: 4px 0;
+}
+
+.quotes q {
+  font-style: italic;
+}

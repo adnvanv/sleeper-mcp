@@ -100,7 +100,8 @@ function compareTable(m) {
     h(
       "tbody",
       {},
-      row("ROS pts/game", m.add.ros_ppg, m.drop.ros_ppg),
+      row("Expected pts/game", m.add.ros_ppg, m.drop.ros_ppg),
+      row("Sleeper projection", m.add.projected_ppg, m.drop.projected_ppg),
       row("Games left", m.add.ros_games, m.drop.ros_games),
       row(`Week ${data_fromWeek} proj`, m.add.next_week, m.drop.next_week),
       row("Last 3 pts/game", m.add.last3_ppg, m.drop.last3_ppg),
@@ -112,6 +113,25 @@ function compareTable(m) {
 }
 
 let data_fromWeek = 0;
+
+function quotesBlock(c) {
+  if (!c.quotes?.length && !c.notes?.length) return null;
+  return h(
+    "div",
+    { class: "intel" },
+    h("h5", {}, c.name),
+    c.notes?.length ? h("ul", { class: "reasons" }, c.notes.map((n) => h("li", {}, n))) : null,
+    c.quotes?.length
+      ? h(
+          "ul",
+          { class: "quotes" },
+          c.quotes.map((q) =>
+            h("li", {}, h("q", {}, q.text), h("span", { class: "sub" }, ` ${q.source}, ${shortTime(q.date)}`)),
+          ),
+        )
+      : null,
+  );
+}
 
 function moveCard(m, i) {
   const who = (c) =>
@@ -148,7 +168,21 @@ function moveCard(m, i) {
       h("div", {}, h("h4", {}, `Why add ${m.add.name.split(" ").slice(-1)[0]}`), h("ul", {}, m.add_reasons.map((r) => h("li", {}, r)))),
       h("div", {}, h("h4", {}, `Why drop ${m.drop.name.split(" ").slice(-1)[0]}`), h("ul", {}, m.drop_reasons.map((r) => h("li", {}, r)))),
     ),
-    h("details", { class: "mv-more" }, h("summary", {}, "Side-by-side numbers"), compareTable(m)),
+    m.cautions?.length
+      ? h(
+          "div",
+          { class: "caution", role: "note" },
+          h("strong", {}, `Before you drop ${m.drop.name}:`),
+          h("ul", {}, m.cautions.map((c) => h("li", {}, c))),
+        )
+      : null,
+    h(
+      "details",
+      { class: "mv-more" },
+      h("summary", {}, "What the news and numbers say"),
+      h("div", { class: "intel-grid" }, quotesBlock(m.add), quotesBlock(m.drop)),
+      compareTable(m),
+    ),
   );
 }
 
@@ -163,7 +197,7 @@ function renderAdvice(data, { body, note }) {
     h(
       "p",
       { class: "legend" },
-      `How this works: for every remaining week through your playoffs, it builds your best lineup from Sleeper's projections in your league's scoring. "ROS pts" is how many more starting points that lineup scores after the swap, so byes, injuries and position needs are already counted. `,
+      `How this works: each player's expected points a game blends Sleeper's projection with how he's actually been used in the games he played (targets, carries, snaps), leaning on recent usage more when there are more games to go on and when other Sleeper managers are adding him. For every remaining week through your playoffs it then builds your best lineup, scored your league's way. "ROS pts" is how many more starting points that lineup scores after the swap, so byes, injuries and position needs are already counted. News is read for returns from injury, practice reports and role descriptions, and quoted where it matters. `,
       data.waiver_type === "rolling"
         ? `Your league uses rolling waivers: players dropped in the last ${data.waiver_clear_days} days need a waiver claim, everyone else can be added right away.`
         : "",
@@ -197,7 +231,25 @@ function renderDrops(data) {
             h("span", { class: "sub" }, ` ${d.player.position} · ${d.player.team || "FA"}`),
             h("span", { class: "drop-pts", title: "Starting points he adds to your lineup, rest of season" }, `${d.ros_contribution.toFixed(1)} pts`),
           ),
-          h("ul", { class: "reasons" }, d.reasons.slice(0, 3).map((r) => h("li", {}, r))),
+          h(
+            "ul",
+            { class: "reasons" },
+            d.reasons
+              .filter((r) => !r.startsWith("Hold? "))
+              .slice(0, 3)
+              .map((r) => h("li", {}, r)),
+          ),
+          d.player.hold_flags?.length
+            ? h(
+                "div",
+                { class: "caution small" },
+                h("strong", {}, "Think twice:"),
+                h("ul", {}, d.player.hold_flags.map((r) => h("li", {}, r))),
+              )
+            : null,
+          d.player.quotes?.length || d.player.notes?.length
+            ? h("details", { class: "mv-more" }, h("summary", {}, "What the news and numbers say"), quotesBlock(d.player))
+            : null,
         ),
       ),
     ),
