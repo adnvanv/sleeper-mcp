@@ -763,3 +763,29 @@ test("usage direction separates growing, shrinking and mixed roles", () => {
   assert.equal(usageDirection(u(-0.17, 3.2)), "mixed");
   assert.equal(usageDirection(u(0.01, 0.5)), null);
 });
+
+// ---------- Live pace (green / red) ----------
+
+import { paceOf } from "../dist/feeds/live.js";
+
+test("pace compares points with the projection for time played", () => {
+  assert.equal(paceOf(0, 10, "pre", 1), null); // not started
+  assert.equal(paceOf(0, null, "in", 0.5), null); // no projection
+  assert.equal(paceOf(0, 10, "in", 0.95), "even"); // first minutes
+  assert.equal(paceOf(2, 10, "in", 0.95), "good"); // early score
+  assert.equal(paceOf(8, 10, "in", 0.5), "good"); // 8 vs 5 expected
+  assert.equal(paceOf(5, 10, "in", 0.5), "even");
+  assert.equal(paceOf(2, 10, "in", 0.5), "bad"); // 2 vs 5 expected
+  assert.equal(paceOf(12, 10, "post", 0), "good"); // final beat projection
+  assert.equal(paceOf(6, 10, "post", 0), "bad");
+  assert.equal(paceOf(1.2, 1.5, "in", 0.5), "even"); // tiny gaps aren't flagged
+});
+
+test("live sides carry player and team pace", () => {
+  const { me } = sides();
+  const puka = me.starters.find((p) => p.player_id === "1");
+  // 10 pts with 62.5% of the game played vs 16 projected (10 expected): even
+  assert.equal(puka.pace, "even");
+  assert.equal(me.starters.find((p) => p.player_id === "3").pace, null); // not started
+  assert.equal(me.pace, "even");
+});

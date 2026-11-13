@@ -385,6 +385,20 @@ function renderActivity(data, { body, note, section }) {
 
 let lastPoints = new Map();
 
+/** Latest pace per player from the live feed, for other panels (roster). */
+export const livePace = new Map();
+
+const PACE_TITLE = {
+  good: "Ahead of his projection for the time played",
+  bad: "Well behind his projection for the time played",
+  even: "Close to his projection",
+};
+
+export function paceMark(pace) {
+  if (pace !== "good" && pace !== "bad") return null;
+  return h("span", { class: `pace-arrow ${pace}`, "aria-hidden": "true" }, pace === "good" ? "▲" : "▼");
+}
+
 function liveRow(p, flash) {
   const g = p.game;
   const state =
@@ -395,7 +409,7 @@ function liveRow(p, flash) {
         : null;
   return h(
     "tr",
-    { class: [flash ? "bump" : "", g.state === "in" ? "playing" : ""].join(" ").trim() || null },
+    { class: [flash ? "bump" : "", g.state === "in" ? "playing" : "", p.pace ? `pace-${p.pace}` : ""].join(" ").trim() || null },
     h("td", { class: "slot" }, p.slot),
     h(
       "td",
@@ -421,7 +435,12 @@ function liveRow(p, flash) {
         p.stat_line ? h("span", { class: "sub statline" }, p.stat_line) : null,
       ),
     ),
-    h("td", { class: "num strong" }, p.points.toFixed(1)),
+    h(
+      "td",
+      { class: `num strong pts-${p.pace || "none"}`, title: p.pace ? `${PACE_TITLE[p.pace]} (projected ${p.projected})` : null },
+      paceMark(p.pace),
+      p.points.toFixed(1),
+    ),
     h(
       "td",
       { class: "num muted", title: p.projected == null ? "No projection" : `Projected ${p.projected}` },
@@ -510,7 +529,7 @@ function renderLive(data, { body, note, section }) {
       "div",
       { class: "sl-team mine" },
       h("span", { class: "sl-name", title: me.team_name }, me.team_name),
-      h("span", { class: "sl-pts" }, me.points.toFixed(2)),
+      h("span", { class: `sl-pts pts-${me.pace || "none"}`, title: me.pace ? PACE_TITLE[me.pace] : null }, paceMark(me.pace), me.points.toFixed(2)),
       h("span", { class: "sub" }, `proj ${me.projected_final.toFixed(1)}`),
     ),
     h(
@@ -533,7 +552,7 @@ function renderLive(data, { body, note, section }) {
           "div",
           { class: "sl-team" },
           h("span", { class: "sl-name", title: opp.team_name }, opp.team_name),
-          h("span", { class: "sl-pts" }, opp.points.toFixed(2)),
+          h("span", { class: `sl-pts pts-${opp.pace || "none"}`, title: opp.pace ? PACE_TITLE[opp.pace] : null }, paceMark(opp.pace), opp.points.toFixed(2)),
           h("span", { class: "sub" }, `proj ${opp.projected_final.toFixed(1)}`),
         )
       : h("div", { class: "sl-team" }, h("span", { class: "sub" }, "Bye week")),
@@ -588,6 +607,10 @@ function renderLive(data, { body, note, section }) {
         )
       : null,
   );
+
+  livePace.clear();
+  for (const s of [me, opp].filter(Boolean)) for (const p of s.starters) livePace.set(p.player_id, p.pace);
+  document.dispatchEvent(new CustomEvent("livepace"));
 
   lastPoints = new Map(
     [me, opp].filter(Boolean).flatMap((s) => s.starters.map((p) => [`${s.roster_id}:${p.player_id}`, p.points])),

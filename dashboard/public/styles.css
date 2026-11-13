@@ -1387,3 +1387,34 @@ table.compare th[scope="row"] {
 .quotes q {
   font-style: italic;
 }
+
+/* ---------- Live pace (Sleeper-style green / red) ---------- */
+.pts-good {
+  color: var(--pos);
+}
+
+.pts-bad {
+  color: var(--neg);
+}
+
+.pace-arrow {
+  font-size: 0.65em;
+  margin-right: 3px;
+  vertical-align: 0.15em;
+}
+
+.pace-arrow.good {
+  color: var(--pos);
+}
+
+.pace-arrow.bad {
+  color: var(--neg);
+}
+
+tr.pace-good td:first-child {
+  box-shadow: inset 3px 0 0 var(--pos);
+}
+
+tr.pace-bad td:first-child {
+  box-shadow: inset 3px 0 0 var(--neg);
+}

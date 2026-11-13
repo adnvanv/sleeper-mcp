@@ -9,7 +9,7 @@ import {
   timeAgo,
   injuryBadge,
 } from "./dom.js";
-import { feedRenderers, feedTopics } from "./feeds.js";
+import { feedRenderers, feedTopics, livePace, paceMark } from "./feeds.js";
 
 // ---------- Panels ----------
 
@@ -89,7 +89,15 @@ const renderers = {
               : null,
           ),
         ),
-        h("td", { class: "num" }, p.player_id ? p.points.toFixed(1) : "–"),
+        h(
+          "td",
+          {
+            class: `num pts-${livePace.get(p.player_id) || "none"}`,
+            "data-pace-id": p.player_id || null,
+          },
+          paceMark(livePace.get(p.player_id)),
+          p.player_id ? p.points.toFixed(1) : "–",
+        ),
         h("td", { class: "num muted" }, fmt1(p.season_ppg)),
       );
     const group = (label, players) =>
@@ -505,6 +513,18 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 setInterval(updateStatus, 30 * 1000);
+
+// Re-color roster points when live pace changes, without refetching.
+document.addEventListener("livepace", () => {
+  for (const td of document.querySelectorAll("[data-pace-id]")) {
+    const pace = livePace.get(td.dataset.paceId) || "none";
+    td.className = `num pts-${pace}`;
+    const arrow = td.querySelector(".pace-arrow");
+    const mark = paceMark(pace);
+    if (arrow) arrow.replaceWith(...(mark ? [mark] : []));
+    else if (mark) td.prepend(mark);
+  }
+});
 
 // ---------- Live stream (server-sent events from the background poller) ----------
 

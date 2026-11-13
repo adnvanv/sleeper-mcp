@@ -174,6 +174,28 @@ export function statLine(stats: Stats | undefined, position?: string | null): st
   return parts.join(" · ");
 }
 
+export type Pace = "good" | "bad" | "even" | null;
+
+/**
+ * Points vs the share of the projection that "should" be in by now. Early in
+ * a game (under 10% played) everything reads even; a final compares to the
+ * full projection.
+ */
+export function paceOf(
+  points: number,
+  projected: number | null,
+  state: GameState | "bye",
+  fractionLeft: number,
+): Pace {
+  if (projected == null || projected <= 0 || state === "pre" || state === "bye") return null;
+  const played = state === "post" ? 1 : 1 - fractionLeft;
+  if (played < 0.1) return points > 0 ? "good" : "even";
+  const expected = projected * played;
+  if (points >= expected * 1.1 && points - expected >= 1) return "good";
+  if (points <= expected * 0.7 && expected - points >= 1) return "bad";
+  return "even";
+}
+
 export interface LivePlayer {
   player_id: string;
   name: string;
@@ -183,6 +205,12 @@ export interface LivePlayer {
   points: number;
   projected: number | null;
   projected_final: number;
+  /**
+   * How he's doing against his projection so far, like Sleeper's green/red:
+   * "good" ahead of pace, "bad" well behind, "even" in between, null before
+   * kickoff or without a projection.
+   */
+  pace: Pace;
   stat_line: string;
   game: {
     state: GameState | "bye";
@@ -198,6 +226,8 @@ export interface LiveSide {
   team_name: string;
   points: number;
   projected_final: number;
+  /** Team pace: points so far vs projection for the game time played. */
+  pace: Pace;
   playing_now: number;
   yet_to_play: number;
   starters: LivePlayer[];
@@ -232,6 +262,7 @@ export function liveSide(input: {
       points: r2(points),
       projected: projected == null ? null : r2(projected),
       projected_final: r2(points + (projected ?? 0) * left),
+      pace: paceOf(points, projected, game ? game.state : "bye", left),
       stat_line: statLine(stats[id], p?.position),
       game: game
         ? {
@@ -253,10 +284,27 @@ export function liveSide(input: {
     team_name: input.teamName,
     points: r2(matchup.points || 0),
     projected_final: r2(list.reduce((sum, s) => sum + s.projected_final, 0)),
+    pace: teamPace(list, byTeam),
     playing_now: list.filter((s) => s.game.state === "in").length,
     yet_to_play: list.filter((s) => s.game.state === "pre").length,
     starters: list,
   };
+}
+
+function teamPace(list: LivePlayer[], byTeam: Map<string, LiveGame>): Pace {
+  let points = 0;
+  let expected = 0;
+  for (const p of list) {
+    if (p.projected == null || p.game.state === "pre" || p.game.state === "bye") continue;
+    const g = p.team ? byTeam.get(p.team) : undefined;
+    const played = p.game.state === "post" ? 1 : 1 - (g?.fraction_left ?? 1);
+    points += p.points;
+    expected += p.projected * played;
+  }
+  if (expected < 3) return null;
+  if (points >= expected * 1.1) return "good";
+  if (points <= expected * 0.85) return "bad";
+  return "even";
 }
 
 /** Standard normal CDF (Abramowitz-Stegun approximation). */
