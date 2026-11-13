@@ -195,7 +195,7 @@ function chips(options, current, onPick, label) {
 }
 
 function fill(el, ...kids) {
-  el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+  el.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false));
 }
 
 function sectionHead(title, sub, right) {
@@ -317,6 +317,25 @@ function recommendations() {
   for (const r of (t?.starters || []).filter((x) => x.player_id)) {
     const ai = aiRead(r.player_id)?.read;
     if (ai?.outlook === "down" && ai.confidence !== "low") recs.push({ kind: "AI read", tone: "warn", text: `${r.name}: ${ai.summary}`, id: r.player_id });
+  }
+  const idea = S.trades?.ideas?.[0];
+  if (idea) {
+    recs.push({
+      kind: "Trade",
+      tone: "go",
+      text: `Offer ${idea.a.gives_cards.map((c) => c.name).join(" + ")} to ${idea.b.team_name} for ${idea.a.gets_cards.map((c) => c.name).join(" + ")} (${ACCEPT[idea.acceptance].toLowerCase()})`,
+      gain: `${signed(idea.a.ros_gain)} ROS pts`,
+      action: h("button", { type: "button", class: "sleeper-btn", onclick: (ev) => { ev.stopPropagation(); showTab("trade"); } }, "See trade"),
+    });
+  }
+  for (const lt of (S.trades?.league_trades || []).filter((x) => Date.now() - Date.parse(x.date) < 3 * 86400 * 1000)) {
+    const diff = lt.a.ros_gain - lt.b.ros_gain;
+    recs.push({
+      kind: lt.involves_you ? "Your trade" : "League trade",
+      tone: "info",
+      text: `${lt.a.team_name} ⇄ ${lt.b.team_name}: ${Math.abs(diff) < 2 ? "about even" : `${diff > 0 ? lt.a.team_name : lt.b.team_name} comes out ahead (${signed(Math.abs(diff))} ROS pts)`}`,
+      action: h("button", { type: "button", class: "sleeper-btn", onclick: (ev) => { ev.stopPropagation(); showTab("league"); } }, "Evaluation"),
+    });
   }
   const o = S.odds;
   if (o?.if_win != null && o.if_win - o.if_lose >= 15) {
@@ -848,6 +867,9 @@ function renderLeague(el) {
     );
   }
 
+  const lt = leagueTradesSection();
+  if (lt) parts.push(lt);
+
   const st = S.standings;
   parts.push(sectionHead("All-play standings", st ? `Weeks ${st.weeks_counted[0]}–${st.weeks_counted.at(-1)}` : ""));
   if (st) {
@@ -908,27 +930,182 @@ function renderLeague(el) {
 
 // ---------- TRADE ----------
 
-function renderTrade(el) {
-  const d = S.values;
-  if (!d) return fill(el, errors.values ? h("p", { class: "state error" }, errors.values) : loading());
-  const mine = d.teams.find((t) => t.is_you);
-  const others = d.teams.filter((t) => !t.is_you);
-  if (!mine) return fill(el, h("p", { class: "state" }, "You are not in this league."));
-  if (!ui.partner || !others.some((t) => t.roster_id === ui.partner)) ui.partner = others[0]?.roster_id;
-  const partner = others.find((t) => t.roster_id === ui.partner);
-  const sum = (team, set) => team.players.filter((p) => set.has(p.player_id)).reduce((s, p) => s + p.value, 0);
-  const give = sum(mine, ui.giving);
-  const get = partner ? sum(partner, ui.getting) : 0;
-  const diff = get - give;
-  const base = Math.max(give, get, 1);
-  const even = Math.abs(diff) / base < 0.05;
-  const list = (team, set) =>
+const signed = (n) => `${n > 0 ? "+" : ""}${Number(n).toFixed(1)}`;
+const ACCEPT = { likely: "Likely accepted", possible: "Possible", "long shot": "Long shot" };
+
+function tradePlayer(c) {
+  return h(
+    "div",
+    { class: "tp", role: "button", tabindex: "0", onclick: () => openSheet(c.player_id) },
+    headshot(c, "sm"),
     h(
-      "ul",
-      { class: "trade-list" },
-      team.players
-        .filter((p) => p.value > 0)
-        .map((p) =>
+      "div",
+      { style: { minWidth: "0", flex: "1" } },
+      h("div", { class: "nm" }, c.name, injuryBadge(c.injury_status), aiBadge(c.player_id)),
+      h("div", { class: "line" }, posTag(c.position), ` · ${c.team || "FA"} · ${r1(c.ros_ppg)} pts/g`),
+    ),
+    h("span", { class: "val", title: "FantasyCalc trade value" }, c.value ? c.value.toLocaleString() : "–"),
+  );
+}
+
+/** Lineup and value impact for both sides of a trade (a = you). */
+function tradeImpact(e) {
+  const bar = (label, gain, po) =>
+    h(
+      "div",
+      { class: "impact" },
+      h("span", { class: "who" }, label),
+      h("b", { class: gain >= 0 ? "good" : "bad" }, signed(gain)),
+      h("span", { class: "muted" }, `ROS starting pts · playoffs ${signed(po)}`),
+    );
+  const pct = Math.round((e.value_ratio_b - 1) * 100);
+  return h(
+    "div",
+    { class: "impacts" },
+    bar("Your lineup", e.a.ros_gain, e.a.playoff_gain),
+    bar("Their lineup", e.b.ros_gain, e.b.playoff_gain),
+    h(
+      "div",
+      { class: "impact" },
+      h("span", { class: "who" }, "Trade value"),
+      h("b", {}, `${e.a.value_gets.toLocaleString()} for ${e.a.value_gives.toLocaleString()}`),
+      h("span", { class: "muted" }, Math.abs(pct) <= 5 ? "about even" : pct > 0 ? `they get ${pct}% more` : `you get ${-pct}% more`),
+    ),
+  );
+}
+
+function tradeCardView(e, opts = {}) {
+  return h(
+    "article",
+    { class: `trade-card${opts.top ? " top" : ""}` },
+    h(
+      "header",
+      { class: "trade-head" },
+      avatar(e.b.avatar, e.b.team_name),
+      h("div", { style: { flex: "1", minWidth: "0" } }, h("div", { class: "nm" }, opts.title || `Trade with ${e.b.team_name}`), opts.sub ? h("div", { class: "muted", style: { fontSize: "0.76rem" } }, opts.sub) : null),
+      e.acceptance ? h("span", { class: `accept ${e.acceptance.replace(" ", "-")}` }, ACCEPT[e.acceptance]) : null,
+    ),
+    h(
+      "div",
+      { class: "trade-sides" },
+      h("div", {}, h("h4", {}, opts.giveLabel || "You give"), e.a.gives_cards.map(tradePlayer)),
+      h("div", { class: "arrow", "aria-hidden": "true" }, "⇄"),
+      h("div", {}, h("h4", {}, opts.getLabel || "You get"), e.a.gets_cards.map(tradePlayer)),
+    ),
+    tradeImpact(e),
+    e.reasons?.length ? h("ul", { class: "reasons", style: { marginTop: "10px" } }, e.reasons.map((r) => h("li", {}, r))) : null,
+    opts.actions ? h("div", { class: "actions", style: { gap: "8px" } }, opts.actions) : null,
+  );
+}
+
+let evalTimer = null;
+let evalKey = "";
+
+function requestEval() {
+  const key = `${ui.partner}|${[...ui.giving].join(",")}|${[...ui.getting].join(",")}`;
+  if (key === evalKey) return;
+  evalKey = key;
+  clearTimeout(evalTimer);
+  if (!ui.giving.size && !ui.getting.size) {
+    S.tradeEval = null;
+    return;
+  }
+  evalTimer = setTimeout(async () => {
+    try {
+      S.tradeEval = await api(`trade-eval?partner=${ui.partner}&give=${[...ui.giving].join(",")}&get=${[...ui.getting].join(",")}`);
+      S.tradeEvalError = null;
+    } catch (error) {
+      S.tradeEval = null;
+      S.tradeEvalError = error.message;
+    }
+    render();
+  }, 250);
+}
+
+function strengthGrid(t) {
+  if (!t?.teams?.length) return null;
+  const groups = Object.keys(t.teams[0].positions);
+  const n = t.teams.length;
+  return h(
+    "div",
+    { class: "card scroll-x", style: { padding: "6px 10px" } },
+    h(
+      "table",
+      { class: "strength" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Team"), groups.map((g) => h("th", { class: "num" }, g)))),
+      h(
+        "tbody",
+        {},
+        t.teams.map((team) =>
+          h(
+            "tr",
+            { class: team.is_you ? "mine" : null },
+            h("td", {}, h("div", { class: "team-cell" }, avatar(team.avatar, team.team_name), h("span", { class: "nm" }, team.team_name))),
+            groups.map((g) => {
+              const s = team.positions[g];
+              if (!s) return h("td", { class: "num muted" }, "–");
+              const tier = s.rank <= Math.ceil(n / 3) ? "strong" : s.rank > n - Math.ceil(n / 3) ? "weak" : "";
+              return h("td", { class: `num sg ${tier}`.trim(), title: `${g}: ${s.ppg} a week (${signed(s.diff)} vs average), rank ${s.rank} of ${n}` }, ordinal(s.rank));
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderTrade(el) {
+  const t = S.trades;
+  const parts = [];
+  parts.push(sectionHead("Suggested trades", t ? `Both lineups improve · weeks ${t.from_week}–${t.through_week}` : null));
+  if (!t) parts.push(errors.trades ? h("p", { class: "state error" }, errors.trades) : loading());
+  else if (!t.ideas.length) parts.push(h("p", { class: "state" }, "No trade right now improves both lineups at a fair price."));
+  else {
+    parts.push(
+      t.ideas.map((e, i) =>
+        tradeCardView(e, {
+          top: i === 0,
+          actions: [
+            h(
+              "button",
+              {
+                type: "button",
+                class: "icon-btn",
+                onclick: () => {
+                  ui.partner = e.b.roster_id;
+                  ui.giving = new Set(e.a.gives);
+                  ui.getting = new Set(e.a.gets);
+                  render();
+                  document.getElementById("evaluator")?.scrollIntoView({ behavior: "smooth" });
+                },
+              },
+              "Tweak it",
+            ),
+            sleeperButton("Propose in Sleeper", "trades"),
+          ],
+        }),
+      ),
+      h("p", { class: "legend" }, "Each idea improves both teams' best lineups over the rest of the season (Sleeper projections, byes and injuries counted) and keeps trade value close (FantasyCalc, with depth discounted), so the other manager has a reason to say yes. \"Likely\" = they gain 4+ points and get at least even value."),
+    );
+  }
+  parts.push(sectionHead("Position strength", "League rank by starting position, points a week this season"), strengthGrid(t));
+
+  // Evaluator
+  const d = S.values;
+  parts.push(h("div", { id: "evaluator" }));
+  parts.push(sectionHead("Evaluate an offer", "Got an offer, or want to try one? Tick players on both sides"));
+  if (!d) parts.push(loading());
+  else {
+    const mine = d.teams.find((x) => x.is_you);
+    const others = d.teams.filter((x) => !x.is_you);
+    if (!ui.partner || !others.some((x) => x.roster_id === ui.partner)) ui.partner = others[0]?.roster_id;
+    const partner = others.find((x) => x.roster_id === ui.partner);
+    requestEval();
+    const list = (team, set) =>
+      h(
+        "ul",
+        { class: "trade-list" },
+        team.players.map((p) =>
           h(
             "li",
             {},
@@ -938,50 +1115,70 @@ function renderTrade(el) {
               h("input", {
                 type: "checkbox",
                 checked: set.has(p.player_id),
-                onchange: (e) => {
-                  if (e.target.checked) set.add(p.player_id);
+                onchange: (ev) => {
+                  if (ev.target.checked) set.add(p.player_id);
                   else set.delete(p.player_id);
                   render();
                 },
               }),
               headshot(p, "sm"),
               h("span", { class: "nm" }, p.name, h("div", { class: "line", style: { fontSize: "0.72rem", fontWeight: "400" } }, posTag(p.position), ` ${p.position_rank ? `#${p.position_rank}` : ""} · ${p.team || "FA"}`)),
-              h("span", { class: "val" }, p.value.toLocaleString(), p.trend_30d ? h("span", { class: p.trend_30d > 0 ? "good" : "bad" }, p.trend_30d > 0 ? " ▲" : " ▼") : null),
+              h("span", { class: "val" }, p.value ? p.value.toLocaleString() : "–"),
             ),
           ),
         ),
-    );
-  const select = h(
-    "select",
-    {
-      class: "chip",
-      "aria-label": "Trade partner",
-      onchange: (e) => {
-        ui.partner = Number(e.target.value);
-        ui.getting.clear();
-        render();
+      );
+    const select = h(
+      "select",
+      {
+        class: "chip",
+        "aria-label": "Trade partner",
+        onchange: (ev) => {
+          ui.partner = Number(ev.target.value);
+          ui.getting.clear();
+          render();
+        },
       },
-    },
-    others.map((t) => h("option", { value: t.roster_id, selected: t.roster_id === ui.partner }, t.team_name)),
-  );
-  const rank = d.teams.findIndex((t) => t.is_you) + 1;
-  fill(
-    el,
-    sectionHead("Trade calculator", `${d.source} values · your roster ranks ${rank} of ${d.teams.length}`, select),
-    h(
-      "div",
-      { class: `verdict-box ${!give && !get ? "" : even ? "" : diff > 0 ? "good" : "bad"}`, role: "status" },
-      h("strong", {}, !give && !get ? "Tick players on both sides to compare a trade." : even ? "Even trade" : diff > 0 ? `You win by ${diff.toLocaleString()} (${Math.round((diff / base) * 100)}%)` : `You lose by ${(-diff).toLocaleString()} (${Math.round((-diff / base) * 100)}%)`),
-      give || get ? h("div", { class: "muted", style: { fontSize: "0.82rem" } }, `You give ${give.toLocaleString()} · you get ${get.toLocaleString()}`) : null,
-    ),
-    h(
-      "div",
-      { class: "trade-cols" },
-      h("div", { class: "card" }, h("h3", { style: { marginBottom: "6px" } }, "You give"), list(mine, ui.giving)),
-      partner ? h("div", { class: "card" }, h("h3", { style: { marginBottom: "6px" } }, `${partner.team_name} gives`), list(partner, ui.getting)) : null,
-    ),
-    h("p", { class: "legend" }, "Crowd-sourced redraft values from FantasyCalc in your league's format. Adding values up flatters 2-for-1 offers: the side getting the single best player usually wins those."),
-  );
+      others.map((x) => h("option", { value: x.roster_id, selected: x.roster_id === ui.partner }, x.team_name)),
+    );
+    const ev = S.tradeEval;
+    parts.push(
+      h("div", { class: "row-end" }, select, ui.giving.size || ui.getting.size ? h("button", { type: "button", class: "icon-btn", onclick: () => { ui.giving.clear(); ui.getting.clear(); render(); } }, "Clear") : null),
+      ev && (ui.giving.size || ui.getting.size)
+        ? tradeCardView(ev, {
+            title: ev.verdict_a === "win" ? "Good for you" : ev.verdict_a === "lose" ? "Bad for you" : "Fair trade",
+            sub: `${ev.b.team_name} · ${ACCEPT[ev.acceptance]}`,
+            actions: [sleeperButton(ev.verdict_a === "lose" ? "Counter in Sleeper" : "Open trades in Sleeper", "trades")],
+          })
+        : S.tradeEvalError
+          ? h("p", { class: "state error" }, S.tradeEvalError)
+          : null,
+      h(
+        "div",
+        { class: "trade-cols" },
+        h("div", { class: "card" }, h("h3", { style: { marginBottom: "6px" } }, "You give"), list(mine, ui.giving)),
+        partner ? h("div", { class: "card" }, h("h3", { style: { marginBottom: "6px" } }, `${partner.team_name} gives`), list(partner, ui.getting)) : null,
+      ),
+    );
+  }
+  fill(el, parts);
+}
+
+function leagueTradesSection() {
+  const t = S.trades;
+  if (!t?.league_trades?.length) return null;
+  return [
+    sectionHead("Trades in your league", "Judged from today: who comes out ahead the rest of the season"),
+    t.league_trades.slice(0, 8).map((e) => {
+      const winner = e.a.ros_gain - e.b.ros_gain;
+      return tradeCardView(e, {
+        title: `${e.a.team_name} ⇄ ${e.b.team_name}`,
+        sub: `Week ${e.week} · ${timeAgo(e.date)}${e.draft_picks ? ` · plus ${e.draft_picks} draft pick${e.draft_picks > 1 ? "s" : ""}` : ""} · ${Math.abs(winner) < 2 ? "about even" : `${winner > 0 ? e.a.team_name : e.b.team_name} wins it`}`,
+        giveLabel: `${e.a.team_name} gives`,
+        getLabel: `${e.a.team_name} gets`,
+      });
+    }),
+  ];
 }
 
 // ---------- NEWS ----------
@@ -1474,6 +1671,7 @@ async function refreshAll() {
     load("standings"),
     load("transactions"),
     load("insights"),
+    load("trades"),
     load("ai"),
     loadMatchupView(),
     ...["live", "activity", "advice", "news", "values", "outlook"].map((k) => load(k)),
@@ -1507,7 +1705,10 @@ function openStream() {
         load("players");
         if (!viewingMyLiveMatchup() && (ui.mWeek == null || ui.mWeek === S.summary?.week)) loadMatchupView();
       }
-      if (topic === "advice") load("players");
+      if (topic === "advice") {
+        load("players");
+        load("trades");
+      }
       render();
     });
   }

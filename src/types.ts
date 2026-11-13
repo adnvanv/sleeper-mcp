@@ -135,6 +135,8 @@ export interface SleeperTrendingPlayer {
 
 export interface SleeperTransaction {
   transaction_id: string;
+  /** When the transaction last changed status (ms); completed trades use this. */
+  status_updated?: number;
   type: 'trade' | 'free_agent' | 'waiver';
   status: 'complete' | 'failed' | 'pending';
   roster_ids: number[];

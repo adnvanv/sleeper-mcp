@@ -362,7 +362,7 @@ and is read with a generic User-Agent.
 | --- | --- | --- |
 | League scores | Sleeper `/league/{id}/matchups/{week}` | Live points in your scoring |
 | Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
-| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, playoff simulation, Gemini reader (stubbed fetch), re-scored with your league settings |
+| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, playoff simulation, Gemini reader (stubbed fetch), trade evaluation and suggestions, re-scored with your league settings |
 | Player news (per player) | ESPN fantasy news API, `?playerId=` for each of your players and the advisor's top pickups | Rotowire blurbs and analysis for exactly your players |
 | Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
 | Play-by-play | ESPN game summary API | Activity stream: every play involving one of your players |
@@ -575,6 +575,33 @@ outside image host the Content-Security-Policy allows).
 - **Safety.** All content is built with DOM methods, never `innerHTML`, and
   failed images fall back to initials.
 
+### Trades (`src/feeds/trades.ts`)
+
+- **Position strength:** every team's points a week from each starting
+  position this season (from `starters_points`), vs the league average, with
+  a rank. Shown as a grid on the TRADE tab (green = top third, red = bottom
+  third).
+- **Evaluating a trade:** each team's best lineup for every remaining week
+  through the fantasy playoffs (Sleeper projections) before and after, so
+  byes, injuries and positional need count; plus FantasyCalc value with the
+  side receiving more players discounted for depth (best player 100%, then
+  60%, 40%, 30%). Acceptance: "likely" if they gain 4+ starting points and get
+  at least 97% of the value they give, "possible" if they gain 1+ and get 90%+.
+- **Suggestions:** 1-for-1, 2-for-1 and 1-for-2 packages from each side's
+  top-10 QB/RB/WR/TE by value, against every other team. Kept only if your
+  lineup gains 3+ points, theirs 1+, neither team's playoff weeks get worse,
+  they receive 90-135% of the value they give (so it isn't a fleece), and the
+  acceptance isn't a long shot. Ranked by the smaller of the two gains (so
+  both sides win) with a bonus for "likely"; up to three per partner and no
+  player of yours in more than two. Each comes with reasons tied to position
+  strength (your need, their surplus).
+- **Evaluate an offer:** tick players on both sides of the calculator and
+  `/api/trade-eval?partner=&give=&get=` returns the same evaluation.
+- **League trades:** Sleeper's API only shows trades once they're accepted
+  (pending offers are private), so every completed trade this season is
+  evaluated from today forward on the LEAGUE tab, and new ones (last three
+  days) appear on HOME.
+
 ### Computed views (`src/dashboard/views.ts`)
 
 - **Team:** each starter and bench player with game time, opponent and its
@@ -597,7 +624,7 @@ outside image host the Content-Security-Policy allows).
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 132 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 138 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out

@@ -118,6 +118,8 @@ test("real dashboard exposes the expected panels", () => {
     "standings",
     "summary",
     "team",
+    "trade-eval",
+    "trades",
     "transactions",
     "usage",
     "values",

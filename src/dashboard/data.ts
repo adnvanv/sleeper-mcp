@@ -18,7 +18,7 @@ import {
 } from "../season.js";
 import type { NFLGame, SleeperMatchup, SleeperPlayer } from "../types.js";
 import { FeedPoller, type Topic } from "../feeds/poller.js";
-import { AVATAR_URL, userAvatar, insightsView, matchupView, playerView, playersIndex, playoffOdds, teamView } from "./views.js";
+import { AVATAR_URL, userAvatar, insightsView, matchupView, playerView, playersIndex, playoffOdds, teamView, tradesView, tradeEvalView } from "./views.js";
 
 const LIVE_SCHEDULE_MS = 5 * 60 * 1000;
 const RISKY = new Set(["Out", "IR", "Doubtful", "Suspended", "PUP"]);
@@ -318,6 +318,13 @@ export const panels = {
   players: viewPanel((st) => playersIndex(st)),
   odds: viewPanel((st) => playoffOdds(st)),
   insights: viewPanel((st) => insightsView(st)),
+  trades: viewPanel((st) => tradesView(st)),
+  "trade-eval": viewPanel((st, q) => {
+    const ids = (k: string) => (q.get(k) || "").split(",").filter((x) => /^[A-Za-z0-9]{1,12}$/.test(x)).slice(0, 6);
+    const partner = Number(q.get("partner"));
+    if (!Number.isInteger(partner)) throw new Error("Missing partner");
+    return tradeEvalView(st, partner, ids("give"), ids("get"));
+  }),
   matchup: viewPanel((st, q) =>
     matchupView(st, q.get("week") ? Number(q.get("week")) : undefined, q.get("id") ? Number(q.get("id")) : undefined),
   ),

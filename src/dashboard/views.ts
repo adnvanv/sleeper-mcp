@@ -12,6 +12,7 @@ import { leaguePoints, scheduleOutlook } from "../feeds/analysis.js";
 import { adjustFactor } from "../feeds/advisor.js";
 import { gamesByTeam, paceOf, statLine, type LiveGame } from "../feeds/live.js";
 import type { FeedPoller } from "../feeds/poller.js";
+import { evaluateTrade, positionStrength, suggestTrades, tradeReasons, type TradeContext, type TradeEval } from "../feeds/trades.js";
 import type { NFLGame, SleeperPlayer, SleeperRoster } from "../types.js";
 
 type State = ReturnType<FeedPoller["state"]>;
@@ -769,4 +770,153 @@ export async function matchupView(st: State, weekArg?: number, matchupArg?: numb
           })),
       })),
   };
+}
+
+// ---------- trades ----------
+
+
+async function tradeContext(st: State) {
+  const data = await st.league();
+  const playoffStart = data.league.settings.playoff_week_start || 15;
+  const ctx: TradeContext = {
+    rosterPositions: data.league.roster_positions,
+    fromWeek: data.currentWeek,
+    throughWeek: Math.min(18, playoffStart + 2),
+    playoffStart,
+    projections: st.weekProjections,
+    players: data.players,
+    values: new Map([...st.values].map(([id, v]) => [id, v.value])),
+  };
+  const active = (r: SleeperRoster) => (r.players || []).filter((id) => !(r.reserve || []).includes(id) && !(r.taxi || []).includes(id));
+  return { data, ctx, active };
+}
+
+function tradeCard(st: State, data: LeagueData, id: string, ctx: TradeContext) {
+  const p = data.players.get(id);
+  let ros = 0;
+  let games = 0;
+  for (let w = ctx.fromWeek; w <= ctx.throughWeek; w++) {
+    const v = ctx.projections.get(w)?.get(id);
+    if (v) {
+      ros += v;
+      games++;
+    }
+  }
+  const ai = st.aiReads.get(id)?.read;
+  return {
+    player_id: id,
+    name: name(p, id),
+    position: p?.position || null,
+    team: p?.team || null,
+    injury_status: st.injuries.get(id) ?? p?.injury_status ?? null,
+    ros_ppg: games ? r1(ros / games) : null,
+    value: ctx.values.get(id) || 0,
+    ai: ai ? { outlook: ai.outlook, confidence: ai.confidence, summary: ai.summary } : null,
+  };
+}
+
+function describeEval(st: State, data: LeagueData, ctx: TradeContext, e: TradeEval) {
+  const nameOf = (rid: number) => {
+    const r = data.rosters.find((x) => x.roster_id === rid);
+    return r ? teamName(r, data.users.find((u) => u.user_id === r.owner_id)) : `Team ${rid}`;
+  };
+  const avatarOf = (rid: number) => {
+    const r = data.rosters.find((x) => x.roster_id === rid);
+    return userAvatar(r ? data.users.find((u) => u.user_id === r.owner_id) : null);
+  };
+  const side = (s: TradeEval["a"]) => ({
+    ...s,
+    team_name: nameOf(s.roster_id),
+    avatar: avatarOf(s.roster_id),
+    gives_cards: s.gives.map((id) => tradeCard(st, data, id, ctx)),
+    gets_cards: s.gets.map((id) => tradeCard(st, data, id, ctx)),
+  });
+  return { ...e, a: side(e.a), b: side(e.b) };
+}
+
+let tradesCache: { key: string; at: number; value: unknown } | null = null;
+
+/** Suggested trades, every team's position strength, and the league's completed trades, evaluated. */
+export async function tradesView(st: State) {
+  const { data, ctx, active } = await tradeContext(st);
+  const mine = findRosterForUser(data.rosters, st.userId);
+  if (!mine) throw new Error("You are not in this league");
+  const key = `${data.currentWeek}:${st.weekProjections.size}:${data.rosters.map((r) => (r.players || []).join(".")).join("|")}:${st.values.size}`;
+  if (tradesCache && tradesCache.key === key && Date.now() - tradesCache.at < 10 * 60 * 1000) return tradesCache.value;
+
+  const strength = positionStrength(data.weeks, data.league.roster_positions);
+  const me = { roster_id: mine.roster_id, ids: active(mine) };
+  const others = data.rosters.filter((r) => r.roster_id !== mine.roster_id).map((r) => ({ roster_id: r.roster_id, ids: active(r) }));
+  const ideas = suggestTrades(ctx, me, others, strength, { limit: 10, perPartner: 3 });
+
+  // Every completed trade this season, judged from today forward.
+  const lists = await Promise.all(
+    Array.from({ length: data.currentWeek }, (_, i) => sleeperClient.getTransactions(st.leagueId, i + 1).catch(() => [])),
+  );
+  const leagueTrades = lists
+    .flat()
+    .filter((t) => t?.type === "trade" && t.status === "complete" && (t.roster_ids || []).length === 2)
+    .sort((x, y) => (y.status_updated || y.created) - (x.status_updated || x.created))
+    .slice(0, 15)
+    .map((t) => {
+      const [ra, rb] = t.roster_ids as number[];
+      const adds = (t.adds || {}) as Record<string, number>;
+      const aGets = Object.keys(adds).filter((id) => adds[id] === ra);
+      const bGets = Object.keys(adds).filter((id) => adds[id] === rb);
+      const rosterA = data.rosters.find((r) => r.roster_id === ra);
+      const rosterB = data.rosters.find((r) => r.roster_id === rb);
+      // rebuild each roster as it was just before the trade
+      const before = (r: SleeperRoster | undefined, gets: string[], gives: string[]) =>
+        [...new Set([...(r ? active(r) : []).filter((id) => !gets.includes(id)), ...gives])];
+      const e = evaluateTrade(
+        ctx,
+        { roster_id: ra, ids: before(rosterA, aGets, bGets) },
+        { roster_id: rb, ids: before(rosterB, bGets, aGets) },
+        bGets,
+        aGets,
+      );
+      return {
+        transaction_id: t.transaction_id,
+        date: new Date(t.status_updated || t.created).toISOString(),
+        week: t.leg,
+        involves_you: (t.roster_ids as number[]).includes(mine.roster_id),
+        draft_picks: (t.draft_picks || []).length,
+        ...describeEval(st, data, ctx, e),
+      };
+    });
+
+  const teams = data.rosters.map((r) => ({
+    roster_id: r.roster_id,
+    team_name: teamName(r, data.users.find((u) => u.user_id === r.owner_id)),
+    avatar: userAvatar(data.users.find((u) => u.user_id === r.owner_id)),
+    is_you: r.roster_id === mine.roster_id,
+    positions: Object.fromEntries(strength.get(r.roster_id) || []),
+  }));
+
+  const value = {
+    from_week: ctx.fromWeek,
+    through_week: ctx.throughWeek,
+    playoff_start: ctx.playoffStart,
+    ideas: ideas.map((i) => ({ ...describeEval(st, data, ctx, i), partner_roster_id: i.partner_roster_id, score: i.score, reasons: i.reasons })),
+    league_trades: leagueTrades,
+    teams,
+  };
+  tradesCache = { key, at: Date.now(), value };
+  return value;
+}
+
+/** Evaluate any trade: you give `give`, partner gives `get`. */
+export async function tradeEvalView(st: State, partner: number, give: string[], get: string[]) {
+  const { data, ctx, active } = await tradeContext(st);
+  const mine = findRosterForUser(data.rosters, st.userId);
+  const them = data.rosters.find((r) => r.roster_id === partner);
+  if (!mine || !them) throw new Error("Unknown team");
+  const mineIds = active(mine);
+  const theirIds = active(them);
+  if (!give.every((id) => (mine.players || []).includes(id)) || !get.every((id) => (them.players || []).includes(id))) {
+    throw new Error("Those players aren't on those rosters");
+  }
+  const e = evaluateTrade(ctx, { roster_id: mine.roster_id, ids: [...new Set([...mineIds, ...give])] }, { roster_id: partner, ids: [...new Set([...theirIds, ...get])] }, give, get);
+  const strength = positionStrength(data.weeks, data.league.roster_positions);
+  return { ...describeEval(st, data, ctx, e), reasons: tradeReasons(e, ctx, strength, mine.roster_id, partner) };
 }
