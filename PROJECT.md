@@ -10,12 +10,19 @@ that share one codebase:
    - **HTTP:** it runs on a server behind a public HTTPS address (Tailscale
      Funnel) as a claude.ai custom connector, which also makes the tools work
      in the Claude phone app.
-2. **A local web dashboard** (`npm run dashboard`): one page with this week's
-   matchups, your roster, all-play standings, trending free agents and league
-   moves. It refreshes itself during games and works on a phone.
+2. **A web dashboard** (`npm run dashboard`) styled after the Sleeper app,
+   installable on a phone's home screen. Tabs: HOME (recommendations and
+   season analytics), MATCHUP (live, slot by slot, any week or matchup), TEAM
+   (lineup with start/sit tips), WAIVERS (add/drop advisor), LEAGUE (playoff
+   odds, standings, every league trade evaluated), TRADE (trade suggestions,
+   position strength, offer evaluator) and NEWS, plus a players pane (search,
+   available, trending, leaders, activity) and a sheet for any player. A
+   background poller feeds it live scores every 2 seconds while your players
+   are on, play-by-play, news per player, projections and trade values, and an
+   optional Gemini model reads each player's news.
 
-Both use the same Sleeper client, caches and analysis code, so a number in a
-chat always matches the number on the dashboard.
+Both use the same Sleeper client and caches; projections everywhere are
+Sleeper's own, so numbers match the Sleeper app.
 
 Setup and connection steps are in [SETUP.md](SETUP.md).
 
@@ -64,15 +71,23 @@ flowchart LR
     MS --> H[handlers.ts]
     H --> DEF[defaults.ts<br/>fill username / league / season]
     H --> AN[Analysis modules<br/>all-play, free-agents, scout,<br/>trade-finder, transaction-feed]
-    BR[Browser / phone] -- HTTP --> SRV[dashboard/server.ts]
-    SRV --> DATA[dashboard/data.ts]
+    BR[Browser / installed phone app] -- HTTPS via tailscale serve :8443 --> SRV[dashboard/server.ts]
+    SRV --> DATA[dashboard/data.ts<br/>panels]
+    SRV -- server-sent events --> BR
+    DATA --> VIEWS[dashboard/views.ts<br/>team, matchup, players,<br/>odds, insights, trades]
+    DATA --> POLL[feeds/poller.ts<br/>background poller]
+    VIEWS --> POLL
+    POLL --> FEEDS[feeds/*<br/>live, news, activity, advisor,<br/>signals, trades, analyst]
+    POLL -- HTTPS --> EXT[(ESPN, Rotowire,<br/>FantasyCalc, Sleeper stats)]
+    POLL -- optional --> GEM[(Google Gemini)]
     DATA --> AN
     DATA --> DEF
+    POLL --> LD
     AN --> LD[league-data.ts<br/>loader]
     LD --> SC[sleeper-client.ts]
     H --> SC
     SC -- HTTPS --> API[(Sleeper API)]
-    SC <--> CACHE[(.cache/<br/>players, schedule)]
+    SC <--> CACHE[(.cache/<br/>players, schedule, stats,<br/>news, AI reads, ESPN IDs)]
 ```
 
 **Three front ends, one core.** The stdio MCP server (`src/index.ts`), the
@@ -90,10 +105,12 @@ the arguments with Zod, fetches through the client, runs the analysis and
 returns JSON. Errors come back as `{ success: false, error }` instead of
 crashing the server.
 
-**Request flow (dashboard).** The browser loads static files, then calls
-`/api/<panel>` for each panel at the same time. The server resolves your
-league and user once, then calls the panel function in `dashboard/data.ts`,
-which uses the same loader and analysis modules.
+**Request flow (dashboard).** The browser loads static files, calls
+`/api/<panel>` for each panel, and opens `/api/stream` for live updates. The
+server resolves your league and user once. Simple panels call the loader and
+analysis modules directly; the rest read the background poller's latest state
+(`views.ts` computes team, matchup, players, odds, insights and trades on
+request; feed panels return the poller's snapshots).
 
 **Request flow (HTTP MCP).** claude.ai sends a JSON-RPC POST to
 `https://<server>.ts.net/mcp/<secret>`. Tailscale Funnel ends the HTTPS
@@ -128,16 +145,23 @@ sleeper-mcp/
 │   ├── types.ts              Sleeper API types
 │   ├── utils.ts              Upstream helpers (unchanged)
 │   ├── feeds/
-│   │   ├── poller.ts         Background poller: schedules, snapshots, live events
-│   │   ├── live.ts           ESPN scoreboard, live sides, win chance, score events
-│   │   ├── news.ts           Rotowire/ESPN news parsing, player matching, tagging
-│   │   ├── analysis.ts       Projections, usage trends, points allowed, schedule, values
+│   │   ├── poller.ts         Background poller: schedules, snapshots, live events, state for views
+│   │   ├── live.ts           ESPN scoreboard, live sides, pace, win chance, score events
+│   │   ├── news.ts           Rotowire/ESPN news parsing, player matching, tagging, dedupe
+│   │   ├── activity.ts       Play-by-play matching for the activity stream
+│   │   ├── analysis.ts       League-scored projections, usage trends, points allowed, schedule, values
+│   │   ├── signals.ts        News reading, games actually played, market signals, outlooks
+│   │   ├── advisor.ts        Waiver advisor: lineup-based add/drop moves and drop candidates
+│   │   ├── trades.ts         Position strength, trade evaluation, suggestions, played-out results
+│   │   ├── analyst.ts        Optional Gemini article reader (model fallback, search grounding)
 │   │   ├── rss.ts            Minimal RSS parser
 │   │   └── http.ts           fetch with timeout and generic User-Agent
 │   └── dashboard/
-│       ├── server.ts         node:http server, static files + JSON API
-│       └── data.ts           One function per dashboard panel
-├── dashboard/public/         Frontend: index.html, app.js, feeds.js, dom.js, refresh.js, styles.css
+│       ├── server.ts         node:http server: static files, JSON API, /api/stream (SSE)
+│       ├── data.ts           Panel registry; starts the poller
+│       └── views.ts          Team, matchup, players, player sheet, playoff odds, insights, trades
+├── dashboard/public/         Frontend: index.html, app.js, charts.js, dom.js, refresh.js,
+│                             styles.css, manifest.webmanifest, icons
 ├── test/                     Offline unit tests (node:test), one file per module
 ├── test.mjs                  Upstream MCP protocol tests (live API)
 ├── scripts/smoke.mjs         Call any tool against the live API from the terminal
@@ -163,7 +187,7 @@ All from `https://api.sleeper.app/v1` unless noted. No authentication.
 | `/league/{id}/matchups/{week}` | Scores, starters, **per-player points** |
 | `/league/{id}/transactions/{week}` | Trades, waivers, FAAB, picks |
 | `/players/nfl` | Full player database (~5 MB download, 19 MB on disk) |
-| `/players/nfl/trending/add` | League-wide add counts across Sleeper |
+| `/players/nfl/trending/add`, `/drop` | Sleeper-wide add and drop counts (market signal) |
 | `https://api.sleeper.app/schedule/nfl/regular/{season}` | NFL schedule (undocumented; see below) |
 
 The schedule endpoint isn't in Sleeper's public docs, but it's the same public
@@ -178,7 +202,14 @@ and opponent info is simply left blank.
 | Disk: `.cache/schedule-{season}.json` | NFL schedule | 24 h (5 min for live dashboard panels) | Bye weeks and opponents; game status during games |
 | Memory: request cache | Every other GET | 30 s default | Lets parallel dashboard panels share one call |
 | Memory: past-week matchups | Weeks before the current one | 1 h | Final scores don't change |
-| Memory: trending adds | Trending list | 5 min | Changes slowly |
+| Memory: trending adds/drops | Trending lists | 5 min | Changes slowly |
+| Disk: `.cache/stats-{season}-w{n}.json` | Weekly stats, all players | Finished weeks kept; latest refetched daily | Usage trends, points allowed, game logs |
+| Disk: `.cache/news.json` | Player news | Last 400 items | Keeps news across restarts |
+| Disk: `.cache/ai-reads.json` | Gemini reads | Until a player's news changes (or 6-24 h) | Avoids re-reading unchanged news |
+| Disk: `.cache/espn-ids.json` | Sleeper → ESPN player IDs | Permanent | Per-player news for players Sleeper lacks an ID for |
+
+The dashboard's other outside feeds (ESPN, Rotowire, FantasyCalc, Sleeper's
+stats and projections endpoints) are listed under [Live feeds](#live-feeds-srcfeeds).
 
 The request cache also merges identical requests that are in flight at the
 same moment, and drops failed requests so they're retried. A full dashboard
@@ -198,6 +229,9 @@ folder Claude Desktop starts in):
 | `DASHBOARD_HOST` | `127.0.0.1` | `0.0.0.0` to allow other devices |
 | `DASHBOARD_PORT` | `3030` | Dashboard port |
 | `LIVE_POLL_SECONDS` | `2` | Score polling while one of your players is in a game (1-60) |
+| `GEMINI_API_KEY` | (none) | Turns on the AI article reader |
+| `GEMINI_MODELS` | `gemini-flash-latest,gemini-3-flash-preview,gemini-3.1-flash-lite` | Models to try, in order |
+| `MCP_HTTP_HOST` / `MCP_HTTP_PORT` / `MCP_HTTP_SECRET` | `127.0.0.1` / `3031` / (none) | HTTP MCP endpoint (see SETUP.md) |
 
 `DefaultsResolver` applies them per tool:
 
@@ -338,8 +372,14 @@ feed also counts moves by type and by team.
 
 - Plain `node:http`, with no web framework and no extra dependencies.
 - `GET /` and static files come from `dashboard/public/`.
-  `GET /api/{summary|standings|matchups|roster|free-agents|transactions}`
-  returns `{ data, updated }`. `GET /api/health` is a liveness check.
+  `GET /api/<panel>` returns `{ data, updated }`. Panels: `summary`,
+  `standings`, `matchups`, `roster`, `free-agents`, `transactions`, `live`,
+  `activity`, `news`, `usage`, `outlook`, `values`, `advice`, `ai`, `feeds`,
+  `team`, `matchup` (`?week=&id=`), `players`, `player` (`?id=`), `odds`,
+  `insights`, `trades` and `trade-eval` (`?partner=&give=&get=`). Query
+  parameters are validated. `GET /api/stream` is a server-sent event stream
+  (at most 20 open, heartbeat every 25 s). `GET /api/health` is a liveness
+  check.
 - **Read-only:** anything other than GET or HEAD gets `405`.
 - **Hardening:** static paths are normalized and must stay inside the public
   folder, which blocks path traversal like `/../.env`. A strict
@@ -362,7 +402,7 @@ and is read with a generic User-Agent.
 | --- | --- | --- |
 | League scores | Sleeper `/league/{id}/matchups/{week}` | Live points in your scoring |
 | Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
-| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, playoff simulation, Gemini reader (stubbed fetch), trade evaluation and suggestions, re-scored with your league settings |
+| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Every projection shown, projected finals, win chance, start/sit, the waiver advisor, playoff odds and trades; re-scored with your league settings |
 | Player news (per player) | ESPN fantasy news API, `?playerId=` for each of your players and the advisor's top pickups | Rotowire blurbs and analysis for exactly your players |
 | Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
 | Play-by-play | ESPN game summary API | Activity stream: every play involving one of your players |
@@ -374,12 +414,13 @@ and is read with a generic User-Agent.
 
 | Mode | When | Scores | Game clock / stat lines | News |
 | --- | --- | --- | --- | --- |
-| Fast | One of **your** rostered players is in a game | every `LIVE_POLL_SECONDS` (default 2 s) | every 5 s with the page open, 30 s without | every 2 min |
-| Game day | Any game live, or kickoff within 15 min | every 1 min | every 30-60 s | every 2 min |
-| Idle | Otherwise | every 10 min | every 10-30 min | every 5 min (2 min on game days) |
+| Fast | One of **your** rostered players is in a game | every `LIVE_POLL_SECONDS` (default 2 s) | every 5 s with the page open, 30 s without | headlines every 1 min; per-player rolling every 45 s |
+| Game day | Any game live, or kickoff within 15 min | every 1 min | every 30-60 s | headlines every 1 min; per-player rolling every 1 min |
+| Idle | Otherwise | every 10 min | every 10-30 min | headlines every 2 min; per-player rolling every 1 min |
 
-Projections refresh every 30 minutes; weekly stats and trade values every 6
-hours. Finished weeks of stats are cached on disk (`.cache/stats-*.json`), and
+This week's projections refresh every 15-30 minutes and later weeks' every 6
+hours; weekly stats and trade values every 6 hours; AI reads every 3-10
+minutes (only players whose news changed). Finished weeks of stats are cached on disk (`.cache/stats-*.json`), and
 news is kept in `.cache/news.json` (last 400 items). A failing feed keeps its
 last good data and backs off, doubling up to 15 minutes.
 
@@ -424,9 +465,11 @@ starting points your lineups lose without each one (under 3 = drop, under 12
 The advisor reruns whenever projections, news, weekly stats or values update
 (projections every 15-30 minutes).
 
-**Beyond projections** (`feeds/signals.ts`). Sleeper's projections are slow
-to react to a player returning from injury or a new role, so each player gets
-an adjusted points-a-game estimate:
+**Beyond projections** (`feeds/signals.ts`). Sleeper's projections can be
+slow to react to a player returning from injury or a new role, so each player
+also gets signals that show up as reasons, outlook notes and hold warnings
+(an adjusted points-a-game estimate exists too, but is off by default; see
+the backtest below):
 
 - **Games actually played.** Weeks on IR or inactive are skipped. The last
   three games are weighted toward the newest (and more so when snap share
@@ -538,23 +581,23 @@ outside image host the Content-Security-Policy allows).
   week. The league scores below your matchup are buttons: tap one to view
   that matchup. Past weeks show final
   scores with each starter's stat line (`/api/matchup?week=&id=`).
-- **Installable.** Served privately over HTTPS at
-  `https://<server>.<tailnet>.ts.net:8443` by `tailscale serve` (tailnet
-  only; the Funnel on 443 still serves only the MCP endpoint).
-   `manifest.webmanifest`, app icons and iOS meta tags let
+- **Installable.** `manifest.webmanifest`, app icons and iOS meta tags let
   it be added to a phone's home screen and open full screen. Phones only
-  allow that over HTTPS: serve the dashboard through Tailscale
-  (`tailscale serve --bg --https=8443 http://<tailscale-ip>:3030`), which
-  stays private to your tailnet.
-- **Left tabs:** MATCHUP (both lineups side by side, slot by slot, with live
+  allow that over HTTPS, so the dashboard is served privately at
+  `https://<server>.<tailnet>.ts.net:8443` by
+  `tailscale serve --bg --https=8443 http://<tailscale-ip>:3030` (tailnet
+  only; the Funnel on 443 still serves only the MCP endpoint).
+- **Other tabs:** MATCHUP (both lineups side by side, slot by slot, with live
   points, green/red pace, win chance, live games and a scoring ticker, then
-  league scores), TEAM (team card with win bar, start/sit tips, starters,
-  bench, IR, rest-of-season schedule strength), WAIVERS (advisor moves and
-  drop candidates), LEAGUE (playoff odds, all-play standings, recent moves),
-  TRADE (FantasyCalc calculator) and NEWS.
+  tappable league scores), TEAM (team card with win bar, start/sit tips,
+  starters, bench, IR, rest-of-season schedule strength), WAIVERS (advisor
+  moves and drop candidates), LEAGUE (playoff odds, every league trade
+  evaluated, all-play standings, recent moves), TRADE (suggested trades,
+  position strength grid, offer evaluator) and NEWS (filter by whose and what
+  kind).
 - **Players pane:** search across every relevant player, plus AVAILABLE
-  (free agents by this week's or rest-of-season adjusted projection, with
-  position pills), TREND (Sleeper-wide adds among your free agents), LEADERS
+  (free agents by this week's or rest-of-season projection, with position
+  pills), TREND (Sleeper-wide adds among your free agents), LEADERS
   (season points in your scoring) and ACTIVITY (your players' plays and
   news). Each card shows ROS points a game, last-3 average, snap share,
   targets, adds and season total, plus the advisor's gain if it recommends
@@ -562,16 +605,18 @@ outside image host the Content-Security-Policy allows).
   (live, then final) with green/red pace, his projection and stat line; the
   pane refreshes with the live scores.
 - **Player sheet.** Tap any player anywhere for a slide-over (bottom sheet on
-  phones): this week's adjusted and Sleeper projections, expected and recent
-  points a game, trade value, hold warnings, outlook notes, news quotes,
-  remaining schedule colored by matchup, game log and news.
+  phones): this week's and rest-of-season projections (Sleeper's), recent
+  points a game, trade value, the AI read, hold warnings, outlook notes, news
+  quotes, remaining schedule colored by matchup, game log and news, with an
+  Open in Sleeper button.
 - **Activity bar** under the header shows your players' latest play or news;
   tapping it opens the full activity list.
 - **Updates.** Panels load from `/api/<panel>` (some take query parameters:
-  `player?id=`, `team?roster=`) and refresh on the Eastern-time schedule in
-  `refresh.js`. Live scores, activity, advice, news, values and schedule
-  strength arrive over `/api/stream`; while your players are on, the team and
-  league scores are refetched every 15 seconds.
+  `player?id=`, `matchup?week=&id=`, `trade-eval?…`) and refresh on the
+  Eastern-time schedule in `refresh.js`. Live scores, activity, advice, news,
+  values, schedule strength, AI reads and feed status arrive over
+  `/api/stream`; while your players are on, the team, league scores and
+  players pane are refetched every 15 seconds.
 - **Safety.** All content is built with DOM methods, never `innerHTML`, and
   failed images fall back to initials.
 
@@ -610,17 +655,22 @@ outside image host the Content-Security-Policy allows).
 ### Computed views (`src/dashboard/views.ts`)
 
 - **Team:** each starter and bench player with game time, opponent and its
-  matchup rank, adjusted and Sleeper projections, live points and pace.
-  **Start/sit tips** rebuild your best lineup for this week from adjusted
+  matchup rank, projection, live points and pace.
+  **Start/sit tips** rebuild your best lineup for this week from Sleeper's
   projections among players whose games haven't started (out/IR players
   count as 0) and list each swap with its gain, plus warnings for empty,
   bye-week or injured starters.
 - **Playoff odds:** 10,000 seeded simulations of the remaining regular-season
-  weeks. Each team scores its best projected lineup (adjusted projections)
+  weeks. Each team scores its best projected lineup (Sleeper projections)
   plus noise (standard deviation 15% of the mean + 6), Sleeper's real future
   pairings decide each game, median games count when enabled, and seeding is
   by wins then points for. It also reports your odds if you win or lose this
   week.
+- **Matchup:** any matchup in any week; the current week is live (pace, win
+  chance), past weeks show final scores and stat lines.
+- **Insights:** weekly score vs opponent and league median, points left on
+  the bench (best possible lineup minus started), and points by starting
+  position vs the league average, for the HOME charts.
 - **Players index** and **player detail** feed the pane and the sheet.
 
 ## 9. Testing
@@ -629,7 +679,7 @@ outside image host the Content-Security-Policy allows).
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 140 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 140 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server and live stream, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, pace, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and outlooks, waiver advisor, playoff simulation, Gemini reader (stubbed fetch), trade evaluation, suggestions and played-out results |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out
@@ -658,10 +708,21 @@ of starting the stdio server.
 - **Live data is only as fast as its source.** Polling every 2 seconds shows a
   change as soon as Sleeper or ESPN publishes it, which during games is
   usually within several seconds of the play.
-- **1-for-1 trades only.** The trade finder doesn't build 2-for-1 deals, and
-  it values only the current season (not keepers, dynasty or draft picks).
-- **Live "yet to play"** uses NFL game status from the schedule (refreshed
-  every 5 minutes), so it can lag a few minutes behind real time.
+- **Trades are redraft-only.** Values cover the current season (not keepers,
+  dynasty or draft picks). The dashboard searches 1-for-1, 2-for-1 and
+  1-for-2 deals; the MCP `find_trade_partners` tool is still 1-for-1 on
+  season ppg.
+- **Pending trade offers are private.** Sleeper's API only shows trades once
+  accepted, so offers you receive have to be entered on the TRADE tab to be
+  evaluated.
+- **AI reads can be wrong.** Gemini is told to use only the facts it's given,
+  but treat its takes as a second opinion; they never change projections.
+  On a free Gemini key, Google Search grounding isn't available.
+- **Open in Sleeper** links go to `sleeper.com/leagues/<id>/…` sections,
+  which depend on Sleeper's URL scheme and may land on the league home.
+- **League scores "yet to play"** on the MATCHUP tab's score cards comes from
+  the NFL schedule (refreshed every 5 minutes); your own matchup uses ESPN's
+  live game state.
 - **Upstream heuristics:** `analyze_lineup`, `get_start_sit_advice` and
   `compare_players` still rank by Sleeper's search rank, and
   `research_player_status` returns placeholder "web results". Take them
@@ -689,12 +750,26 @@ of starting the stdio server.
 - Added: dashboard live feeds: live scoring with projections and win chance,
   player news, usage risers, rest-of-season schedule strength, and a trade
   value calculator, pushed to the page as server-sent events.
+- Added: activity stream from play-by-play; per-player news; the waiver
+  advisor and its news/usage/market signals (backtested; projections stay
+  Sleeper's).
+- Added: the Sleeper-style rebuild: split screen, headshots, matchup screen,
+  player sheet, start/sit tips, playoff odds, HOME analytics, week and
+  matchup picker, Open in Sleeper links, home-screen install over Tailscale
+  HTTPS.
+- Added: optional Gemini article reader; trade suggestions, position
+  strength, offer evaluator and evaluations (with actual results) of every
+  league trade.
 
 ## 12. Ideas for later
 
-- 2-for-1 trade search, and a "send this offer" text for Claude to draft.
-- Playoff odds by simulating the rest of the season from each team's weekly
-  scores.
+- Push notifications on the installed app (touchdowns, players ruled out,
+  breaking news on your players, a league trade).
+- Let the MCP tools use the dashboard's projections, advisor and trade engine,
+  so a Claude chat gives the same answers.
+- Backtest the Gemini reads like the projections were, before letting them
+  move any numbers.
+- A "send this offer" message for a suggested trade.
 - Weekly recap (high score, biggest blowout, luckiest win) for the league
   group chat.
 - Draft-pick values for keeper and dynasty leagues.

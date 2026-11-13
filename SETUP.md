@@ -196,34 +196,44 @@ nano .env   # set SLEEPER_USERNAME, SLEEPER_LEAGUE_ID, DASHBOARD_HOST=0.0.0.0
 
 ### Keep it running with systemd
 
-Create `/etc/systemd/system/sleeper-dashboard.service`, replacing `youruser`:
+Run it as a **user service** (no `sudo` needed to restart it). Create
+`~/.config/systemd/user/sleeper-dashboard.service`:
 
 ```ini
 [Unit]
 Description=Sleeper fantasy dashboard
 After=network-online.target
-Wants=network-online.target
 
 [Service]
-User=youruser
-WorkingDirectory=/home/youruser/sleeper-mcp
+WorkingDirectory=%h/sleeper-mcp
 ExecStart=/usr/bin/node dist/dashboard/server.js
 Restart=on-failure
 Environment=NODE_ENV=production
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now sleeper-dashboard
-systemctl status sleeper-dashboard       # should say "active (running)"
-journalctl -u sleeper-dashboard -f       # live logs
+systemctl --user daemon-reload
+systemctl --user enable --now sleeper-dashboard
+sudo loginctl enable-linger $USER          # keep it running when you're logged out
+systemctl --user status sleeper-dashboard  # should say "active (running)"
+journalctl --user -u sleeper-dashboard -f  # live logs
 ```
 
 The service runs `dist/` directly, so after `git pull`, run `npm run build` and
-`sudo systemctl restart sleeper-dashboard`.
+`systemctl --user restart sleeper-dashboard`.
+
+(A system-wide service in `/etc/systemd/system/` with `User=youruser` and
+`WantedBy=multi-user.target` works too; then every command needs `sudo` and
+no `--user`.)
+
+### Optional: AI article reader
+
+Add `GEMINI_API_KEY=<key from aistudio.google.com>` to `.env` and restart the
+service. Gemini then reads your players' news and writes a short take on
+each; see PROJECT.md. The key stays in `.env`, which git ignores.
 
 ### Open it from your phone
 
@@ -242,6 +252,30 @@ sudo ufw allow in on tailscale0 to any port 3030
 
 Don't forward the port on your router. The dashboard has no login, so keep it
 on your home network or Tailscale.
+
+### Install it as an app on your iPhone
+
+iPhones only install web apps from HTTPS addresses. Tailscale can give the
+dashboard one that stays private to your own devices:
+
+1. **Once, on the server:** let your user manage Tailscale, then serve the
+   dashboard over HTTPS on port 8443 (use the address the dashboard listens
+   on, `DASHBOARD_HOST:DASHBOARD_PORT`):
+
+   ```bash
+   sudo tailscale set --operator=$USER
+   tailscale serve --bg --https=8443 http://<DASHBOARD_HOST>:3030
+   tailscale serve status    # shows https://<server>.<tailnet>.ts.net:8443 (tailnet only)
+   ```
+
+   This is `serve`, not `funnel`: only devices on your Tailscale network can
+   open it. It doesn't change a Funnel you set up for the MCP endpoint.
+2. **On the iPhone:** with the Tailscale app connected, open
+   `https://<server>.<tailnet>.ts.net:8443` in **Safari**, tap **Share**, then
+   **Add to Home Screen**, then **Add**.
+
+It opens full screen from its own icon. Tailscale has to be connected on the
+phone for it to load. To stop serving: `tailscale serve --https=8443 off`.
 
 ## 8. Use the tools from Claude on your phone
 
@@ -368,7 +402,8 @@ npm run build
 ```
 
 Then restart whatever you run: Claude Desktop (fully, from the tray), and on the server
-`sudo systemctl restart sleeper-dashboard sleeper-mcp-http`.
+`systemctl --user restart sleeper-dashboard sleeper-mcp-http` (or with
+`sudo` and no `--user` if you installed them system-wide).
 
 ## 10. Housekeeping
 
