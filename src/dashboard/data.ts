@@ -285,6 +285,7 @@ export const panels = {
   "free-agents": getFreeAgents,
   transactions: getTransactions,
   activity: feedPanel("activity"),
+  advice: feedPanel("advice"),
   live: feedPanel("live"),
   news: feedPanel("news"),
   usage: feedPanel("usage"),

@@ -12,6 +12,7 @@ const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k 
 /** Server-sent event topic → panel name. */
 export const feedTopics = {
   activity: "activity",
+  advice: "advice",
   live: "live",
   news: "news",
   usage: "usage",
@@ -40,6 +41,241 @@ function chipGroup(container, options, current, onPick) {
       ),
     ),
   );
+}
+
+// ---------- Waiver advice ----------
+
+function els(name) {
+  const section = document.querySelector(`[data-panel="${name}"]`);
+  return {
+    section,
+    body: section.querySelector("[data-body]"),
+    note: section.querySelector("[data-note]"),
+    filters: section.querySelector("[data-filters]"),
+  };
+}
+
+const gain = (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
+const waiverDate = (iso) =>
+  new Date(iso).toLocaleDateString([], { weekday: "short", hour: "numeric" });
+
+function statusBadges(c) {
+  const out = [];
+  if (c.injury_status) {
+    const s = c.injury_status.toLowerCase();
+    out.push(
+      h(
+        "span",
+        { class: `badge ${s === "questionable" ? "q" : "out"}`, title: c.injury_status },
+        { questionable: "Q", doubtful: "D", out: "OUT", ir: "IR", suspended: "SUS", pup: "PUP" }[s] || c.injury_status,
+      ),
+    );
+  }
+  if (c.on_waivers_until) {
+    out.push(
+      h("span", { class: "badge waiver", title: "Recently dropped: claim it on waivers" }, `Waivers until ${waiverDate(c.on_waivers_until)}`),
+    );
+  }
+  return out;
+}
+
+function compareTable(m) {
+  const row = (label, a, b, better = "high") => {
+    const na = typeof a === "number" ? a : null;
+    const nb = typeof b === "number" ? b : null;
+    const win = na != null && nb != null && na !== nb ? ((better === "high" ? na > nb : na < nb) ? "a" : "b") : null;
+    return h(
+      "tr",
+      {},
+      h("th", { scope: "row" }, label),
+      h("td", { class: `num${win === "a" ? " pos" : ""}` }, a ?? "–"),
+      h("td", { class: `num${win === "b" ? " neg" : ""}` }, b ?? "–"),
+    );
+  };
+  const snap = (c) => (c.snap_share == null ? "–" : `${Math.round(c.snap_share * 100)}%`);
+  return h(
+    "table",
+    { class: "compare" },
+    h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", { class: "num" }, "Add"), h("th", { class: "num" }, "Drop"))),
+    h(
+      "tbody",
+      {},
+      row("ROS pts/game", m.add.ros_ppg, m.drop.ros_ppg),
+      row("Games left", m.add.ros_games, m.drop.ros_games),
+      row(`Week ${data_fromWeek} proj`, m.add.next_week, m.drop.next_week),
+      row("Last 3 pts/game", m.add.last3_ppg, m.drop.last3_ppg),
+      row("Season pts/game", m.add.season_ppg, m.drop.season_ppg),
+      row("Snap share (last 2)", snap(m.add), snap(m.drop)),
+      row("Playoff matchups (1 = easy)", m.add.playoff_rank, m.drop.playoff_rank, "low"),
+    ),
+  );
+}
+
+let data_fromWeek = 0;
+
+function moveCard(m, i) {
+  const who = (c) =>
+    h(
+      "span",
+      { class: "mv-player" },
+      h("span", { class: "mv-name" }, c.name),
+      statusBadges(c),
+      h("span", { class: "sub" }, ` ${c.position} · ${c.team || "FA"}`),
+    );
+  return h(
+    "article",
+    { class: `move${i === 0 ? " top" : ""}` },
+    h(
+      "header",
+      { class: "mv-head" },
+      h("div", { class: "mv-swap" }, h("span", { class: "mv-tag add" }, "ADD"), who(m.add)),
+      h("div", { class: "mv-swap" }, h("span", { class: "mv-tag drop" }, "DROP"), who(m.drop)),
+      h(
+        "div",
+        { class: "mv-gains" },
+        h("span", { class: "gain-big pos", title: "Projected starting points gained, rest of season" }, gain(m.ros_gain)),
+        h("span", { class: "sub" }, "ROS pts"),
+        h(
+          "span",
+          { class: "sub" },
+          `Playoffs ${gain(m.playoff_gain)} · Week ${data_fromWeek} ${gain(m.next_week_gain)}`,
+        ),
+      ),
+    ),
+    h(
+      "div",
+      { class: "mv-why" },
+      h("div", {}, h("h4", {}, `Why add ${m.add.name.split(" ").slice(-1)[0]}`), h("ul", {}, m.add_reasons.map((r) => h("li", {}, r)))),
+      h("div", {}, h("h4", {}, `Why drop ${m.drop.name.split(" ").slice(-1)[0]}`), h("ul", {}, m.drop_reasons.map((r) => h("li", {}, r)))),
+    ),
+    h("details", { class: "mv-more" }, h("summary", {}, "Side-by-side numbers"), compareTable(m)),
+  );
+}
+
+function renderAdvice(data, { body, note }) {
+  data_fromWeek = data.from_week;
+  note.textContent = `Weeks ${data.from_week}–${data.through_week} · playoffs from week ${data.playoff_start}`;
+  fill(
+    body,
+    data.moves.length
+      ? data.moves.map(moveCard)
+      : h("p", { class: "state" }, "No free agent beats anyone on your roster right now. Check back after news or projections change."),
+    h(
+      "p",
+      { class: "legend" },
+      `How this works: for every remaining week through your playoffs, it builds your best lineup from Sleeper's projections in your league's scoring. "ROS pts" is how many more starting points that lineup scores after the swap, so byes, injuries and position needs are already counted. `,
+      data.waiver_type === "rolling"
+        ? `Your league uses rolling waivers: players dropped in the last ${data.waiver_clear_days} days need a waiver claim, everyone else can be added right away.`
+        : "",
+      data.has_usage ? "" : " Usage trends are still loading.",
+    ),
+  );
+  renderDrops(data);
+  renderAvailable(data);
+}
+
+const VERDICT = { drop: "Drop", expendable: "Expendable", keep: "Keep" };
+
+function renderDrops(data) {
+  const { body, note } = els("drops");
+  note.textContent = "Least useful first";
+  fill(
+    body,
+    h(
+      "ul",
+      { class: "list drops" },
+      data.drops.map((d) =>
+        h(
+          "li",
+          {},
+          h(
+            "div",
+            { class: "drop-head" },
+            h("span", { class: `verdict-pill ${d.verdict}` }, VERDICT[d.verdict]),
+            h("span", { class: "mv-name" }, d.player.name),
+            statusBadges(d.player),
+            h("span", { class: "sub" }, ` ${d.player.position} · ${d.player.team || "FA"}`),
+            h("span", { class: "drop-pts", title: "Starting points he adds to your lineup, rest of season" }, `${d.ros_contribution.toFixed(1)} pts`),
+          ),
+          h("ul", { class: "reasons" }, d.reasons.slice(0, 3).map((r) => h("li", {}, r))),
+        ),
+      ),
+    ),
+    h(
+      "p",
+      { class: "legend" },
+      "Points = how many starting points your best lineups lose without him the rest of the season. Bench depth also protects you against injuries, which projections can't see coming.",
+    ),
+  );
+}
+
+let availablePos = null;
+
+function renderAvailable(data) {
+  const { body, filters } = els("available");
+  const order = ["QB", "RB", "WR", "TE", "K", "DEF"];
+  const positions = Object.keys(data.available).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  if (!positions.includes(availablePos)) availablePos = positions.includes("RB") ? "RB" : positions[0];
+  const draw = () => {
+    chipGroup(filters, positions.map((p) => [p, p]), availablePos, (key) => {
+      availablePos = key;
+      draw();
+    });
+    const rows = data.available[availablePos] || [];
+    fill(
+      body,
+      rows.length
+        ? h(
+            "table",
+            {},
+            h(
+              "thead",
+              {},
+              h(
+                "tr",
+                {},
+                h("th", {}, "Player"),
+                h("th", { class: "num", title: "Projected points a game, rest of season" }, "ROS"),
+                h("th", { class: "num", title: `Projection for week ${data.from_week}` }, `W${data.from_week}`),
+                h("th", { class: "num hide-sm", title: "Points a game, last 3 games" }, "L3"),
+                h("th", { class: "num hide-sm", title: "Snap share, last 2 games" }, "Snap"),
+              ),
+            ),
+            h(
+              "tbody",
+              {},
+              rows.map((c) =>
+                h(
+                  "tr",
+                  {},
+                  h(
+                    "td",
+                    {},
+                    h(
+                      "div",
+                      { class: "player" },
+                      h("span", {}, c.name, statusBadges(c)),
+                      h(
+                        "span",
+                        { class: "sub" },
+                        [c.team, c.trending_adds >= 1000 ? `${Math.round(c.trending_adds / 100) / 10}K adds` : null, c.news ? c.news.title : null]
+                          .filter(Boolean)
+                          .join(" · "),
+                      ),
+                    ),
+                  ),
+                  h("td", { class: "num strong" }, fmt1(c.ros_ppg)),
+                  h("td", { class: "num" }, fmt1(c.next_week)),
+                  h("td", { class: "num hide-sm" }, fmt1(c.last3_ppg)),
+                  h("td", { class: "num hide-sm" }, c.snap_share == null ? "–" : pct(c.snap_share)),
+                ),
+              ),
+            ),
+          )
+        : h("p", { class: "state" }, "Nobody available."),
+    );
+  };
+  draw();
 }
 
 // ---------- Activity stream ----------
@@ -745,6 +981,7 @@ function renderFeeds(data, { body, note }) {
 
 export const feedRenderers = {
   activity: renderActivity,
+  advice: renderAdvice,
   live: renderLive,
   news: renderNews,
   usage: renderUsage,

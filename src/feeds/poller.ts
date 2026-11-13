@@ -16,6 +16,7 @@ import { promises as fs } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { sleeperClient } from "../sleeper-client.js";
+import type { SleeperPlayer } from "../types.js";
 import { loadLeagueData, findRosterForUser, type LeagueData } from "../league-data.js";
 import { startingSlots, teamName } from "../season.js";
 import { fetchJson, fetchText } from "./http.js";
@@ -30,6 +31,7 @@ import {
   type LiveSide,
   type ScoreEvent,
 } from "./live.js";
+import { advise, type PlayerNewsBrief } from "./advisor.js";
 import {
   mergeActivity,
   newsActivity,
@@ -41,6 +43,7 @@ import {
 import {
   buildPlayerIndex,
   mergeNews,
+  parseEspnPlayerNews,
   parseEspnNews,
   parseRotowireNews,
   tagNews,
@@ -50,6 +53,7 @@ import {
 } from "./news.js";
 import {
   fantasyCalcParams,
+  leaguePoints,
   pointsAllowed,
   projectionMap,
   riserScore,
@@ -57,6 +61,7 @@ import {
   tradeValues,
   usageTrends,
   type FantasyCalcRow,
+  type UsageTrend,
   type TradeValue,
   type WeeklyRow,
 } from "./analysis.js";
@@ -80,6 +85,11 @@ const URLS = {
   rotowire: "https://www.rotowire.com/rss/news.php?sport=NFL",
   liveStats: (season: string, week: number) =>
     `https://api.sleeper.app/v1/stats/nfl/regular/${season}/${week}`,
+  currentProjections: (season: string, week: number) =>
+    `https://api.sleeper.app/projections/nfl/${season}/${week}?season_type=regular` +
+    ["QB", "RB", "WR", "TE", "K", "DEF"].map((p) => `&position[]=${p}`).join(""),
+  playerNews: (espnId: string) =>
+    `https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=8&playerId=${espnId}`,
   projections: (season: string, week: number) =>
     `https://api.sleeper.app/v1/projections/nfl/regular/${season}/${week}`,
   weekStats: (season: string, week: number) =>
@@ -89,7 +99,7 @@ const URLS = {
 };
 
 export type Mode = "fast" | "game_day" | "idle";
-export type Topic = "activity" | "live" | "news" | "usage" | "outlook" | "values" | "status";
+export type Topic = "advice" | "activity" | "live" | "news" | "usage" | "outlook" | "values" | "status";
 
 export interface Snapshot {
   data: unknown;
@@ -136,6 +146,13 @@ export class FeedPoller extends EventEmitter {
   private events: ScoreEvent[] = [];
   private values = new Map<string, TradeValue>();
   private taggedNews: TaggedNewsItem[] = [];
+  private weekProjections = new Map<number, Map<string, number>>();
+  private futureProjectionsAt = 0;
+  private injuries = new Map<string, string | null>();
+  private weeklyRows: WeeklyRow[] = [];
+  private usageMap = new Map<string, UsageTrend>();
+  private allowed: ReturnType<typeof pointsAllowed> = new Map();
+  private addTargets: string[] = [];
   /** Activity per ESPN game id, for the current week. */
   private plays = new Map<string, ActivityItem[]>();
   private finishedGames = new Set<string>();
@@ -270,15 +287,76 @@ export class FeedPoller extends EventEmitter {
       },
     );
 
-    this.define("projections", () => 30 * MIN, async () => {
-      const data = await this.league();
-      const raw = await fetchJson<Record<string, Record<string, number>>>(
-        URLS.projections(data.league.season, data.currentWeek),
-      );
-      this.projections = projectionMap(raw || {}, data.league.scoring_settings);
-      this.projectionWeek = data.currentWeek;
-      await this.publishLive();
-    });
+    // This week's projections (with fresh injury status) often; the rest of
+    // the season's weekly projections every 6 hours.
+    this.define(
+      "projections",
+      () => (live() || this.gameToday() ? 15 * MIN : 30 * MIN),
+      async () => {
+        const data = await this.league();
+        const season = data.league.season;
+        const week = data.currentWeek;
+        const scoring = data.league.scoring_settings;
+        const rows =
+          (await fetchJson<{ player_id: string; stats?: Record<string, number>; player?: { injury_status?: string | null } }[]>(
+            URLS.currentProjections(season, week),
+          )) || [];
+        const raw: Record<string, Record<string, number>> = {};
+        const injuries = new Map<string, string | null>();
+        for (const r of rows) {
+          raw[String(r.player_id)] = r.stats || {};
+          if (r.player) injuries.set(String(r.player_id), r.player.injury_status ?? null);
+        }
+        this.projections = projectionMap(raw, scoring);
+        this.projectionWeek = week;
+        this.injuries = injuries;
+        this.weekProjections.set(week, this.projections);
+        for (const w of this.weekProjections.keys()) if (w < week) this.weekProjections.delete(w);
+        const through = this.throughWeek(data);
+        if (Date.now() - this.futureProjectionsAt > 6 * HOUR || !this.weekProjections.has(Math.min(week + 1, through))) {
+          for (let w = week + 1; w <= through; w++) {
+            const future = await fetchJson<Record<string, Record<string, number>>>(URLS.projections(season, w));
+            this.weekProjections.set(w, projectionMap(future || {}, scoring));
+          }
+          this.futureProjectionsAt = Date.now();
+        }
+        await this.publishLive();
+        await this.publishAdvice(data);
+      },
+    );
+
+    // News for each of your players (and the advisor's top pickups) straight
+    // from ESPN's per-player fantasy feed, which carries Rotowire's blurbs.
+    this.define(
+      "player-news",
+      () => (fast() ? 2 * MIN : live() || this.gameToday() ? 3 * MIN : 10 * MIN),
+      async () => {
+        const data = await this.league();
+        const roster = findRosterForUser(data.rosters, this.opts.userId);
+        const ids = [...new Set([...(roster?.players || []), ...this.addTargets])];
+        const fresh: NewsItem[] = [];
+        const errors: string[] = [];
+        for (let i = 0; i < ids.length; i += 4) {
+          await Promise.all(
+            ids.slice(i, i + 4).map(async (id) => {
+              const p = data.players.get(id) as (SleeperPlayer & { espn_id?: string | number }) | undefined;
+              if (!p?.espn_id) return;
+              try {
+                const json = await fetchJson<{ feed?: [] }>(URLS.playerNews(String(p.espn_id)));
+                fresh.push(...parseEspnPlayerNews(json, id, p.last_name || ""));
+              } catch (error) {
+                errors.push(error instanceof Error ? error.message : String(error));
+              }
+            }),
+          );
+        }
+        if (!fresh.length && errors.length) throw new Error(errors[0]);
+        this.news = mergeNews(this.news, fresh);
+        await this.saveNews();
+        this.publishNews(data);
+        await this.publishAdvice(data);
+      },
+    );
 
     // Breaking news. Inactives and practice reports matter most on game days.
     this.define(
@@ -310,7 +388,9 @@ export class FeedPoller extends EventEmitter {
     this.define("weekly-stats", () => 6 * HOUR, async () => {
       const data = await this.league();
       const rows = await this.loadWeeklyStats(data);
+      this.weeklyRows = rows;
       this.publishUsageAndOutlook(data, rows);
+      await this.publishAdvice(data);
     });
 
     this.define("values", () => 6 * HOUR, async () => {
@@ -320,6 +400,7 @@ export class FeedPoller extends EventEmitter {
       );
       this.values = tradeValues(rows || []);
       this.publishValues(data);
+      await this.publishAdvice(data);
     });
   }
 
@@ -631,6 +712,7 @@ export class FeedPoller extends EventEmitter {
     const mine = new Set(mineIds);
     const owners = this.owners(data);
     const trends = usageTrends(rows, data.players, scoring);
+    this.usageMap = new Map(trends.map((t) => [t.player_id, t]));
     const tag = (t: (typeof trends)[number]) => ({
       ...t,
       score: Math.round(riserScore(t) * 10) / 10,
@@ -661,8 +743,9 @@ export class FeedPoller extends EventEmitter {
 
     // schedule strength
     const allowed = pointsAllowed(rows, data.players, scoring);
+    this.allowed = allowed;
     const playoffStart = data.league.settings.playoff_week_start || 15;
-    const throughWeek = Math.min(18, playoffStart + 2);
+    const throughWeek = this.throughWeek(data);
     const fromWeek = Math.min(throughWeek, data.currentWeek);
     const outlook = scheduleOutlook({
       playerIds: mineIds,
@@ -682,6 +765,130 @@ export class FeedPoller extends EventEmitter {
       weeks_of_data: weeksUsed.length,
       players: outlook,
     });
+  }
+
+  /** Last week of the fantasy season: playoffs start + 2, capped at 18. */
+  private throughWeek(data: LeagueData): number {
+    return Math.min(18, (data.league.settings.playoff_week_start || 15) + 2);
+  }
+
+  // ---------- waiver advice ----------
+
+  private adviceBusy = false;
+
+  private async publishAdvice(data: LeagueData) {
+    if (this.adviceBusy || !this.weekProjections.size) return;
+    this.adviceBusy = true;
+    try {
+      const roster = findRosterForUser(data.rosters, this.opts.userId);
+      if (!roster) return;
+      const scoring = data.league.scoring_settings;
+      const fromWeek = data.currentWeek;
+      const throughWeek = this.throughWeek(data);
+      const playoffStart = data.league.settings.playoff_week_start || 15;
+      const out = new Set([...(roster.reserve || []), ...(roster.taxi || [])]);
+      const myIds = (roster.players || []).filter((id) => !out.has(id));
+      const rostered = new Set(data.rosters.flatMap((r) => r.players || []));
+
+      // points by week, league scoring
+      const history = new Map<string, Map<number, number>>();
+      for (const r of this.weeklyRows) {
+        if (!r.stats?.gms_active) continue;
+        const m = history.get(r.player_id) || new Map<number, number>();
+        m.set(r.week, leaguePoints(r.stats, scoring));
+        history.set(r.player_id, m);
+      }
+
+      // bye weeks and playoff schedule strength
+      const byeOfTeam = new Map<string, number>();
+      const teamsByWeek = new Map<number, Set<string>>();
+      for (const g of data.schedule) {
+        const set = teamsByWeek.get(g.week) || new Set<string>();
+        set.add(g.home);
+        set.add(g.away);
+        teamsByWeek.set(g.week, set);
+      }
+      const allTeams = new Set([...teamsByWeek.values()].flatMap((s) => [...s]));
+      for (const [week, teams] of teamsByWeek) {
+        for (const t of allTeams) if (!teams.has(t)) byeOfTeam.set(t, week);
+      }
+      const candidates = [
+        ...new Set([...myIds, ...(this.weekProjections.get(fromWeek)?.keys() || [])]),
+      ].filter((id) => data.players.get(id)?.team);
+      const outlook = scheduleOutlook({
+        playerIds: candidates,
+        players: data.players,
+        schedule: data.schedule,
+        allowed: this.allowed,
+        fromWeek,
+        throughWeek,
+        playoffStart,
+      });
+      const playoffRank = new Map(outlook.map((o) => [o.player_id, o.playoff_rank]));
+      const byeWeek = new Map(
+        candidates.map((id) => [id, byeOfTeam.get(data.players.get(id)!.team!) ?? null] as const),
+      );
+
+      // Sleeper-wide adds (cached 5 minutes in the client)
+      const trending = await sleeperClient.getTrendingPlayers("add", 24, 200).catch(() => []);
+      const trendingAdds = new Map(trending.map((t) => [String(t.player_id), t.count]));
+
+      // latest news per player
+      const news = new Map<string, PlayerNewsBrief>();
+      for (const n of this.news) {
+        for (const id of n.player_ids) {
+          if (!news.has(id)) news.set(id, { title: n.title, kind: n.kind, published: n.published, url: n.url });
+        }
+      }
+
+      // players dropped in the last few days are still on waivers
+      const waivers = new Map<string, string>();
+      const clearDays = (data.league.settings as { waiver_clear_days?: number }).waiver_clear_days ?? 2;
+      const lists = await Promise.all(
+        [fromWeek - 1, fromWeek]
+          .filter((w) => w >= 1)
+          .map((w) => sleeperClient.getTransactions(this.opts.leagueId, w).catch(() => [])),
+      );
+      for (const t of lists.flat()) {
+        if (t?.status !== "complete" || !t.drops) continue;
+        const clears = ((t as { status_updated?: number }).status_updated || t.created) + clearDays * 24 * HOUR;
+        if (clears <= Date.now()) continue;
+        for (const id of Object.keys(t.drops)) {
+          if (!rostered.has(id)) waivers.set(id, new Date(clears).toISOString());
+        }
+      }
+
+      const values = new Map([...this.values.entries()].map(([id, v]) => [id, v.value]));
+      const result = advise({
+        fromWeek,
+        throughWeek,
+        playoffStart,
+        rosterPositions: data.league.roster_positions,
+        myIds,
+        rostered,
+        players: data.players,
+        projections: this.weekProjections,
+        injuries: this.injuries,
+        history,
+        usage: this.usageMap,
+        playoffRank,
+        byeWeek,
+        trendingAdds,
+        values,
+        news,
+        waivers,
+      });
+      this.addTargets = result.moves.slice(0, 10).map((m) => m.add.player_id);
+      const waiverType = (data.league.settings as { waiver_type?: number }).waiver_type;
+      this.publish("advice", {
+        ...result,
+        waiver_type: waiverType === 2 ? "faab" : waiverType === 1 ? "reverse_standings" : "rolling",
+        waiver_clear_days: clearDays,
+        has_usage: this.weeklyRows.length > 0,
+      });
+    } finally {
+      this.adviceBusy = false;
+    }
   }
 
   // ---------- trade values ----------

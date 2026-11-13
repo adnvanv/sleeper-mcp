@@ -561,7 +561,7 @@ refreshBtn.addEventListener("click", refreshAll);
 
 // ---------- Tabs ----------
 
-const TABS = ["live", "team", "players", "league", "trades"];
+const TABS = ["live", "waivers", "team", "players", "league", "trades"];
 const tabButtons = [...document.querySelectorAll("[data-tab]")];
 
 function showTab(name, focus = false) {

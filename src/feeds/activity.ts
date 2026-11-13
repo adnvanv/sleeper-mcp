@@ -167,6 +167,14 @@ export function newsActivity(
     .flatMap((n) =>
       n.players
         .filter((p) => mine.has(p.player_id))
+        // player blurbs always count; general columns only if they name him
+        .filter(
+          (p) =>
+            n.source === "Rotowire" ||
+            n.title
+              .toLowerCase()
+              .includes(p.name.replace(/\s+(Jr\.?|Sr\.?|II|III|IV|V)$/i, "").split(" ").slice(-1)[0].toLowerCase()),
+        )
         .slice(0, 1)
         .map((p) => ({
           id: `news:${n.id}`,

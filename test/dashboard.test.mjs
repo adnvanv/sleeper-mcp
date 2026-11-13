@@ -101,6 +101,7 @@ test("read-only: non-GET methods are rejected", async () => {
 test("real dashboard exposes the expected panels", () => {
   assert.deepEqual(Object.keys(panels).sort(), [
     "activity",
+    "advice",
     "feeds",
     "free-agents",
     "live",

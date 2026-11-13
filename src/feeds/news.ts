@@ -25,6 +25,13 @@ export interface NewsItem {
   published: string;
   player_ids: string[];
   kind: NewsKind;
+  /** Same story from two feeds shares a fingerprint (player + opening words). */
+  fingerprint?: string;
+}
+
+export function newsFingerprint(playerId: string | undefined, text: string): string | undefined {
+  if (!playerId || !text) return undefined;
+  return `${playerId}:${normalizeName(text).slice(0, 60)}`;
 }
 
 export interface TaggedNewsItem extends NewsItem {
@@ -136,6 +143,7 @@ export function parseRotowireNews(xml: string, index: PlayerIndex): NewsItem[] {
       published: parseRssDate(item.pubDate) || new Date().toISOString(),
       player_ids: playerId ? [playerId] : [],
       kind: classifyNews(item.title, summary),
+      fingerprint: newsFingerprint(playerId, summary),
     };
   });
 }
@@ -180,14 +188,78 @@ export function parseEspnNews(
     });
 }
 
-/** Merge new items into the stored list: dedupe by id, newest first, capped. */
+interface EspnPlayerNews {
+  id: number | string;
+  type?: string;
+  headline?: string;
+  description?: string;
+  story?: string;
+  published?: string;
+  links?: { web?: { href?: string } };
+}
+
+const stripHtml = (s: string) =>
+  s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+
+/**
+ * ESPN's per-player fantasy news (site.api.espn.com/apis/fantasy/v2/games/ffl/
+ * news/players?playerId=…). "Rotowire" items are the player blurbs: headline
+ * is the news, story the analysis. Columns and videos are skipped unless the
+ * headline names the player.
+ */
+export function parseEspnPlayerNews(
+  json: { feed?: EspnPlayerNews[] },
+  playerId: string,
+  lastName: string,
+): NewsItem[] {
+  const last = normalizeName(lastName);
+  return (json.feed || [])
+    .filter((a) => a.headline && a.type !== "Media")
+    .filter((a) => a.type === "Rotowire" || (last && normalizeName(a.headline!).includes(last)))
+    .map((a) => {
+      const headline = stripHtml(a.headline!);
+      const story = stripHtml(a.story || a.description || "");
+      const blurb = a.type === "Rotowire";
+      return {
+        id: `espn:${a.id}`,
+        source: blurb ? "Rotowire" : "ESPN",
+        title: headline,
+        summary: story.length > 600 ? `${story.slice(0, 600).replace(/\s\S*$/, "")}…` : story,
+        url: a.links?.web?.href || "https://www.espn.com/fantasy/football/",
+        published: a.published || new Date().toISOString(),
+        player_ids: [playerId],
+        kind: classifyNews(`x: ${headline}`, story),
+        fingerprint: blurb ? newsFingerprint(playerId, headline) : undefined,
+      };
+    });
+}
+
+/**
+ * Merge new items into the stored list: dedupe by id and by fingerprint
+ * (the richer copy wins), newest first, capped.
+ */
 export function mergeNews(
   existing: NewsItem[],
   incoming: NewsItem[],
   max = 400,
 ): NewsItem[] {
   const byId = new Map(existing.map((n) => [n.id, n]));
-  for (const item of incoming) byId.set(item.id, { ...byId.get(item.id), ...item });
+  const byPrint = new Map<string, string>();
+  for (const n of byId.values()) if (n.fingerprint) byPrint.set(n.fingerprint, n.id);
+  for (const item of incoming) {
+    const twinId = item.fingerprint ? byPrint.get(item.fingerprint) : undefined;
+    if (twinId && twinId !== item.id) {
+      const twin = byId.get(twinId)!;
+      // Keep the copy with more to say: replace only if the new one's summary
+      // adds something the stored copy doesn't already contain.
+      const have = normalizeName(`${twin.title} ${twin.summary}`);
+      const adds = normalizeName(item.summary).slice(0, 40);
+      if (!adds || have.includes(adds)) continue;
+      byId.delete(twinId);
+    }
+    byId.set(item.id, { ...byId.get(item.id), ...item });
+    if (item.fingerprint) byPrint.set(item.fingerprint, item.id);
+  }
   return [...byId.values()]
     .sort((a, b) => b.published.localeCompare(a.published))
     .slice(0, max);

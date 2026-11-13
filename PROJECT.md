@@ -362,7 +362,8 @@ and is read with a generic User-Agent.
 | --- | --- | --- |
 | League scores | Sleeper `/league/{id}/matchups/{week}` | Live points in your scoring |
 | Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
-| Projections | Sleeper `/v1/projections/nfl/regular/{season}/{week}` | Projected finals and win chance, re-scored with your league settings |
+| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, re-scored with your league settings |
+| Player news (per player) | ESPN fantasy news API, `?playerId=` for each of your players and the advisor's top pickups | Rotowire blurbs and analysis for exactly your players |
 | Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
 | Play-by-play | ESPN game summary API | Activity stream: every play involving one of your players |
 | Player news | Rotowire NFL RSS, ESPN news API | News tagged mine / league / free agent and returning / injury / role / move |
@@ -398,6 +399,38 @@ up the most = easiest). Each of your players gets the rank for every remaining
 opponent through the fantasy playoffs, plus averages for rest of season and
 playoffs.
 
+**Waiver advisor** (`feeds/advisor.ts`, Waivers tab). For every week left
+through the fantasy playoffs it builds your best lineup from projections (in
+your scoring), and sums those weeks: your rest-of-season (ROS) starting
+points. Every free agent worth testing (the best ROS projections at each
+startable position, plus anyone trending or with a growing role) is tried
+against every player on your roster (IR and taxi spots excluded). Each add
+keeps its least costly drop, and moves are ranked by how much they raise ROS
+starting points, with the playoff-weeks and this-week gains alongside. Because
+it works on whole lineups, byes, injuries (an out player projects 0),
+position needs and flex eligibility are all counted, and a good backup who'd
+never start doesn't show as an upgrade.
+
+Each move lists reasons for both sides, built from: ROS points a game and
+games left, role changes (snap share and targets + carries, last two games vs
+before), recent scoring (last three games vs season), playoff schedule
+strength, Sleeper-wide adds in the last 24 h, FantasyCalc value, injury status
+and the latest news. **Drop candidates** lists your players by how many
+starting points your lineups lose without each one (under 3 = drop, under 12
+= expendable). Players dropped in your league within the waiver period
+(`waiver_clear_days`) are flagged "on waivers" with the time they clear.
+**Best available** lists the top free agents per position.
+
+The advisor reruns whenever projections, news, weekly stats or values update
+(projections every 15-30 minutes).
+
+**Per-player news.** On top of the league-wide feeds, the poller asks ESPN's
+fantasy news API for each of your players and the advisor's top ten pickups
+(every 10 minutes, 3 on game days, 2 while your players are on). Those items
+are Rotowire's player blurbs with their analysis. The same story arriving from
+the Rotowire RSS feed is recognized by player and opening words, and only the
+copy with more information is kept.
+
 **Activity stream** (top of the page, on every tab) lists each play that
 involves one of your rostered players, plus news about them, newest first.
 ESPN play text names players as "J.Chase", "Ja.Chase" or "A.St. Brown", and
@@ -428,7 +461,8 @@ the two projected finals with a normal approximation. It's a rough guide.
   Monday night, Saturdays in December and January, and Friday nights in
   September), and every 15 minutes otherwise. A hidden browser tab isn't
   polled; it catches up when shown again.
-- **Tabs:** Live (your matchup, league scores), My team (roster, schedule
+- **Tabs:** Live (your matchup, league scores), Waivers (recommended moves,
+  drop candidates, best available), Team (roster, schedule
   strength, news), Players (usage risers, trending free agents), League
   (standings, moves) and Trades (values and calculator). The tab is kept in
   the URL hash (`#team`), so it survives a reload and can be bookmarked. The
@@ -446,7 +480,7 @@ the two projected finals with a normal approximation. It's a rough guide.
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 106 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), live stream |
+| `test/*.test.mjs` (node:test) | 110 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out
@@ -464,6 +498,10 @@ of starting the stdio server.
 - **The MCP tools don't use projections yet.** The dashboard now reads
   Sleeper's weekly projections, usage trends and schedule strength, but the
   MCP tools still value players on points already scored.
+- **The advisor trusts projections.** It can't foresee injuries, so it gives
+  no credit for bench depth as insurance, and it only knows about a breakout
+  once projections, usage or news reflect it. Use its reasons, not just the
+  number.
 - **Paywalled and login-only sources aren't scraped.** FantasyPros,
   PlayerProfiler, Fantasy Points Data, Establish The Run and X need accounts
   or forbid scraping; KeepTradeCut forbids scraping. The dashboard uses public

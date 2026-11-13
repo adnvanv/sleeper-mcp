@@ -517,3 +517,119 @@ test("activity merges plays and news about your players, newest first", () => {
   ]);
   assert.deepEqual(merged.map((m) => m.id), ["a", "b", "news:n1"]);
 });
+
+// ---------- Per-player news + advisor ----------
+
+import { parseEspnPlayerNews, newsFingerprint } from "../dist/feeds/news.js";
+import { advise, lineupByWeek } from "../dist/feeds/advisor.js";
+
+test("parses ESPN per-player news and dedupes against the Rotowire RSS copy", () => {
+  const items = parseEspnPlayerNews(
+    {
+      feed: [
+        { id: 1, type: "Rotowire", headline: "The Rams placed Nacua (knee) on injured reserve Thursday.", story: "<p>He'll miss at least four games.</p>", published: "2026-11-12T23:00:00Z" },
+        { id: 2, type: "Story", headline: "Week 9 winners and losers", published: "2026-11-09T00:00:00Z" },
+        { id: 3, type: "Story", headline: "Is Nacua's injury a season-ender?", published: "2026-11-12T00:00:00Z" },
+        { id: 4, type: "Media", headline: "Nacua video", published: "2026-11-12T00:00:00Z" },
+      ],
+    },
+    "1",
+    "Nacua",
+  );
+  assert.deepEqual(items.map((i) => i.id), ["espn:1", "espn:3"]);
+  assert.equal(items[0].source, "Rotowire");
+  assert.equal(items[0].summary, "He'll miss at least four games.");
+  assert.equal(items[0].kind, "injury");
+  assert.deepEqual(items[0].player_ids, ["1"]);
+
+  const rss = {
+    id: "rotowire:nfl1",
+    title: "Puka Nacua: Lands on injured reserve",
+    summary: "The Rams placed Nacua (knee) on injured reserve Thursday.",
+    published: "2026-11-12T23:00:00Z",
+    player_ids: ["1"],
+    fingerprint: newsFingerprint("1", "The Rams placed Nacua (knee) on injured reserve Thursday."),
+  };
+  const merged = mergeNews([rss], items);
+  assert.equal(merged.length, 2); // the richer ESPN copy replaced the RSS one
+  assert.ok(merged.some((n) => n.id === "espn:1"));
+  assert.ok(!merged.some((n) => n.id === "rotowire:nfl1"));
+  // and the other way round: a thinner copy arriving later is ignored
+  assert.equal(mergeNews(merged, [rss]).length, 2);
+});
+
+function advisorLeague() {
+  const p = (id, name, position, team) => [id, { player_id: id, first_name: name, last_name: "X", position, team, fantasy_positions: [position] }];
+  const players = new Map([
+    p("q1", "MyQB", "QB", "AAA"),
+    p("r1", "MyRB1", "RB", "AAA"),
+    p("r2", "MyRB2", "RB", "BBB"), // on bye week 2
+    p("r3", "MyRB3", "RB", "AAA"), // deep bench, never starts
+    p("f1", "FreeRB", "RB", "CCC"),
+    p("f2", "FreeQB", "QB", "CCC"),
+    p("x1", "TakenRB", "RB", "DDD"),
+  ]);
+  const proj = (vals) => new Map(Object.entries(vals));
+  const projections = new Map([
+    [1, proj({ q1: 20, r1: 15, r2: 12, r3: 3, f1: 10, f2: 18, x1: 30 })],
+    [2, proj({ q1: 20, r1: 15, r2: 0, r3: 3, f1: 10, f2: 18, x1: 30 })],
+    [3, proj({ q1: 20, r1: 15, r2: 12, r3: 3, f1: 10, f2: 18, x1: 30 })],
+  ]);
+  const empty = new Map();
+  return {
+    fromWeek: 1,
+    throughWeek: 3,
+    playoffStart: 3,
+    rosterPositions: ["QB", "RB", "RB", "BN", "BN"],
+    myIds: ["q1", "r1", "r2", "r3"],
+    rostered: new Set(["q1", "r1", "r2", "r3", "x1"]),
+    players,
+    projections,
+    injuries: empty,
+    history: empty,
+    usage: empty,
+    playoffRank: empty,
+    byeWeek: new Map([["r2", 2]]),
+    trendingAdds: new Map([["f1", 5000]]),
+    values: empty,
+    news: empty,
+    waivers: new Map([["f1", "2026-11-14T08:00:00Z"]]),
+    now: new Date("2026-11-13T00:00:00Z"),
+  };
+}
+
+test("lineup totals per week use the best eligible players", () => {
+  const input = advisorLeague();
+  const weeks = lineupByWeek(input.myIds, input);
+  assert.deepEqual([...weeks.values()], [47, 38, 47]); // week 2: r2 on bye, r3 fills in
+});
+
+test("advisor finds the swap that raises ROS starting points and explains it", () => {
+  const input = advisorLeague();
+  const result = advise(input);
+  assert.equal(result.team_ros_points, 132);
+  const [best] = result.moves;
+  // FreeRB covers MyRB2's bye: +7 in week 2; dropping the never-used r3 costs 0 elsewhere
+  assert.equal(best.add.player_id, "f1");
+  assert.equal(best.drop.player_id, "r3");
+  assert.equal(best.ros_gain, 7);
+  assert.equal(best.playoff_gain, 0);
+  assert.equal(best.add.on_waivers_until, "2026-11-14T08:00:00Z");
+  assert.match(best.add_reasons.join(" "), /Projects 10 pts a game/);
+  assert.match(best.add_reasons.join(" "), /5K Sleeper managers added him/);
+  // FreeQB is a backup behind a better QB: no gain, so not suggested
+  assert.ok(!result.moves.some((m) => m.add.player_id === "f2"));
+  // rostered elsewhere: never suggested
+  assert.ok(!result.moves.some((m) => m.add.player_id === "x1"));
+});
+
+test("drop candidates rank by what each player adds to your lineups", () => {
+  const { drops } = advise(advisorLeague());
+  assert.deepEqual(drops.map((d) => [d.player.player_id, d.ros_contribution, d.verdict]), [
+    ["r3", 3, "expendable"],
+    ["r2", 18, "keep"],
+    ["r1", 39, "keep"], // without him, r3 starts every week and week 2 has a hole
+    ["q1", 60, "keep"],
+  ]);
+  assert.match(drops[0].reasons.join(" "), /Adds only 3 starting points/);
+});

@@ -32,7 +32,8 @@
 
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button type="button" role="tab" data-tab="live" id="tab-live" aria-controls="view-live">Live</button>
-      <button type="button" role="tab" data-tab="team" id="tab-team" aria-controls="view-team">My team</button>
+      <button type="button" role="tab" data-tab="waivers" id="tab-waivers" aria-controls="view-waivers">Waivers</button>
+      <button type="button" role="tab" data-tab="team" id="tab-team" aria-controls="view-team">Team</button>
       <button type="button" role="tab" data-tab="players" id="tab-players" aria-controls="view-players">Players</button>
       <button type="button" role="tab" data-tab="league" id="tab-league" aria-controls="view-league">League</button>
       <button type="button" role="tab" data-tab="trades" id="tab-trades" aria-controls="view-trades">Trades</button>
@@ -54,6 +55,34 @@
             <header class="panel-head">
               <h2>League scores</h2>
               <span class="panel-note" data-note></span>
+            </header>
+            <div class="panel-body" data-body></div>
+          </section>
+        </div>
+      </div>
+
+      <div class="view grid" id="view-waivers" role="tabpanel" aria-labelledby="tab-waivers" data-view="waivers" hidden>
+        <div class="col col-main">
+          <section class="panel" data-panel="advice">
+            <header class="panel-head">
+              <h2>Recommended moves</h2>
+              <span class="panel-note" data-note></span>
+            </header>
+            <div class="panel-body" data-body></div>
+          </section>
+        </div>
+        <div class="col col-side">
+          <section class="panel" data-panel="drops">
+            <header class="panel-head">
+              <h2>Drop candidates</h2>
+              <span class="panel-note" data-note></span>
+            </header>
+            <div class="panel-body" data-body></div>
+          </section>
+          <section class="panel" data-panel="available">
+            <header class="panel-head">
+              <h2>Best available</h2>
+              <div class="chips" role="group" aria-label="Position" data-filters></div>
             </header>
             <div class="panel-body" data-body></div>
           </section>
