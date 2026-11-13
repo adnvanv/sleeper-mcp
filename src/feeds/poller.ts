@@ -32,6 +32,7 @@ import {
   type ScoreEvent,
 } from "./live.js";
 import { advise, type PlayerNewsBrief } from "./advisor.js";
+import { GeminiAnalyst, buildPrompt, type StoredRead } from "./analyst.js";
 import {
   outlook as buildOutlook,
   playedGames,
@@ -77,6 +78,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = join(__dirname, "..", "..", ".cache");
 const NEWS_FILE = join(CACHE_DIR, "news.json");
 const ESPN_IDS_FILE = join(CACHE_DIR, "espn-ids.json");
+const AI_FILE = join(CACHE_DIR, "ai-reads.json");
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -109,7 +111,7 @@ const URLS = {
 };
 
 export type Mode = "fast" | "game_day" | "idle";
-export type Topic = "advice" | "activity" | "live" | "news" | "usage" | "outlook" | "values" | "status";
+export type Topic = "ai" | "advice" | "activity" | "live" | "news" | "usage" | "outlook" | "values" | "status";
 
 export interface Snapshot {
   data: unknown;
@@ -132,6 +134,9 @@ export interface PollerOptions {
   leagueId: string;
   userId: string;
   livePollMs: number;
+  /** Optional Google Gemini key: enables the AI article reader. */
+  geminiApiKey?: string;
+  geminiModels?: string[];
 }
 
 export class FeedPoller extends EventEmitter {
@@ -168,6 +173,8 @@ export class FeedPoller extends EventEmitter {
   private espnLookups = new Map<string, number>(); // last failed search time
   private outlooks = new Map<string, Outlook>();
   private newsCheckedAt = new Map<string, number>();
+  private analyst?: GeminiAnalyst;
+  private aiReads = new Map<string, StoredRead>();
   /** Activity per ESPN game id, for the current week. */
   private plays = new Map<string, ActivityItem[]>();
   private finishedGames = new Set<string>();
@@ -421,6 +428,13 @@ export class FeedPoller extends EventEmitter {
       await this.publishAdvice(data);
     });
 
+    // AI article reader: re-reads a player when his news changes (or the read
+    // gets old), a few players per run, spaced out for the API's rate limits.
+    if (this.opts.geminiApiKey) {
+      this.analyst = new GeminiAnalyst(this.opts.geminiApiKey, this.opts.geminiModels);
+      this.define("ai-reads", () => (live() || this.gameToday() ? 3 * MIN : 10 * MIN), () => this.runAiReads());
+    }
+
     this.define("values", () => 6 * HOUR, async () => {
       const data = await this.league();
       const rows = await fetchJson<FantasyCalcRow[]>(
@@ -477,7 +491,9 @@ export class FeedPoller extends EventEmitter {
   async start() {
     this.stopped = false;
     await this.loadNews();
+    await this.loadAiReads();
     this.setupJobs();
+    if (this.aiReads.size || this.analyst) this.publishAi();
     let delay = 0;
     for (const job of this.jobs.values()) {
       this.schedule(job, delay);
@@ -508,6 +524,7 @@ export class FeedPoller extends EventEmitter {
       liveStats: this.liveStats,
       weekProjections: this.weekProjections,
       outlooks: this.outlooks,
+      aiReads: this.aiReads,
       allowed: this.allowed,
       weeklyRows: this.weeklyRows,
       usage: this.usageMap,
@@ -823,6 +840,93 @@ export class FeedPoller extends EventEmitter {
     return Math.min(18, (data.league.settings.playoff_week_start || 15) + 2);
   }
 
+  // ---------- AI reads ----------
+
+  private aiFingerprint(id: string): string {
+    const news = this.news.filter((n) => n.player_ids.includes(id)).slice(0, 5).map((n) => n.id);
+    const games = this.outlooks.get(id)?.games_played ?? 0;
+    return `${games}|${news.join(",")}`;
+  }
+
+  private async runAiReads() {
+    if (!this.analyst || !this.outlooks.size) return;
+    const data = await this.league();
+    const roster = findRosterForUser(data.rosters, this.opts.userId);
+    const candidates = [...new Set([...(roster?.players || []), ...this.addTargets.slice(0, 8)])];
+    const maxAge = this.gameToday() ? 6 * HOUR : 24 * HOUR;
+    const due = candidates.filter((id) => {
+      const r = this.aiReads.get(id);
+      return !r || r.fingerprint !== this.aiFingerprint(id) || Date.now() - Date.parse(r.at) > maxAge;
+    });
+    if (!due.length) return;
+    const week = data.currentWeek;
+    const scoring = data.league.scoring_settings;
+    const format = `${data.rosters.length}-team ${scoring.rec >= 1 ? "PPR" : scoring.rec > 0 ? "half-PPR" : "standard"} ${data.league.settings.type === 2 ? "dynasty" : "redraft"}`;
+    let done = 0;
+    let lastError: string | null = null;
+    for (const id of due.slice(0, 4)) {
+      const p = data.players.get(id);
+      const o = this.outlooks.get(id);
+      if (!p) continue;
+      const g = data.schedule.find((x) => x.week === week && (x.home === p.team || x.away === p.team));
+      const prompt = buildPrompt({
+        name: `${p.first_name} ${p.last_name}`,
+        position: p.position,
+        team: p.team || null,
+        today: new Date().toISOString().slice(0, 10),
+        week,
+        format,
+        injury: this.injuries.get(id) ?? p.injury_status ?? null,
+        projectedPpg: o?.projected_ppg ?? null,
+        weekProjection: this.weekProjections.get(week)?.get(id) ?? null,
+        opponent: g ? (g.home === p.team ? `vs ${g.away}` : `@ ${g.home}`) : null,
+        games: (o?.last_games || []).map((x) => ({ week: x.week, points: x.points, snap_share: x.snap_share, targets: x.targets, carries: x.carries })),
+        news: this.news.filter((n) => n.player_ids.includes(id)).slice(0, 8),
+        market: { adds_24h: o?.market.adds_24h || 0, drops_24h: o?.market.drops_24h || 0 },
+      });
+      try {
+        const result = await this.analyst.analyze(prompt);
+        this.aiReads.set(id, { ...result, fingerprint: this.aiFingerprint(id) });
+        done++;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+      await new Promise((r) => setTimeout(r, 2500)); // stay well under free-tier rate limits
+    }
+    if (done) {
+      await this.saveAiReads();
+      this.publishAi();
+      await this.publishAdvice(data);
+    }
+    if (!done && lastError) throw new Error(lastError);
+  }
+
+  private publishAi() {
+    this.publish("ai", {
+      enabled: !!this.analyst,
+      search: this.analyst?.searchEnabled ?? false,
+      reads: Object.fromEntries(this.aiReads),
+    });
+  }
+
+  private async loadAiReads() {
+    try {
+      const saved = JSON.parse(await fs.readFile(AI_FILE, "utf-8")) as Record<string, StoredRead>;
+      for (const [k, v] of Object.entries(saved)) this.aiReads.set(k, v);
+    } catch {
+      // none yet
+    }
+  }
+
+  private async saveAiReads() {
+    try {
+      await fs.mkdir(CACHE_DIR, { recursive: true });
+      await fs.writeFile(AI_FILE, JSON.stringify(Object.fromEntries(this.aiReads)));
+    } catch {
+      // cache only
+    }
+  }
+
   // ---------- ESPN IDs ----------
 
   /**
@@ -1026,6 +1130,7 @@ export class FeedPoller extends EventEmitter {
         news,
         waivers,
         outlooks,
+        aiReads: new Map([...this.aiReads].map(([k, v]) => [k, v.read])),
       });
       this.addTargets = result.moves.slice(0, 10).map((m) => m.add.player_id);
       const waiverType = (data.league.settings as { waiver_type?: number }).waiver_type;

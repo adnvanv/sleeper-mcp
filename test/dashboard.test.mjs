@@ -102,6 +102,7 @@ test("real dashboard exposes the expected panels", () => {
   assert.deepEqual(Object.keys(panels).sort(), [
     "activity",
     "advice",
+    "ai",
     "feeds",
     "free-agents",
     "insights",

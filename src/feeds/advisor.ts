@@ -58,6 +58,8 @@ export interface AdvisorInput {
   outlooks?: Map<string, Outlook>;
   /** Scale projections toward recent usage (off by default; see adjustFactor). */
   useBlend?: boolean;
+  /** AI reads of each player's news (Gemini), shown as reasons and cautions. */
+  aiReads?: Map<string, { outlook: "up" | "steady" | "down"; confidence: "low" | "medium" | "high"; summary: string }>;
   now?: Date;
 }
 
@@ -87,6 +89,7 @@ export interface PlayerCard {
   notes: string[];
   hold_flags: string[];
   quotes: { source: string; date: string; text: string }[];
+  ai: { outlook: "up" | "steady" | "down"; confidence: "low" | "medium" | "high"; summary: string } | null;
 }
 
 export interface Move {
@@ -184,6 +187,7 @@ export function buildCard(id: string, input: AdvisorInput): PlayerCard {
     notes: input.outlooks?.get(id)?.notes || [],
     hold_flags: input.outlooks?.get(id)?.hold_flags || [],
     quotes: input.outlooks?.get(id)?.news.quotes || [],
+    ai: input.aiReads?.get(id) || null,
   };
 }
 
@@ -256,6 +260,7 @@ function addReasons(add: PlayerCard, drop: PlayerCard, input: AdvisorInput, usag
   if (add.playoff_rank != null && add.playoff_rank <= 10) {
     out.push(`Soft playoff schedule: opponents average rank ${add.playoff_rank} of 32 vs his position in weeks ${input.playoffStart}+`);
   }
+  if (add.ai && add.ai.outlook !== "down") out.push(`AI read (${add.ai.outlook}, ${add.ai.confidence} confidence): ${add.ai.summary}`);
   if (add.trending_adds >= 1000 && !add.notes.some((n) => n.includes("Sleeper adds"))) out.push(`${fmtAdds(add.trending_adds)} Sleeper managers added him in the last 24h`);
   if (add.value > drop.value + 300) {
     out.push(`Higher trade value (FantasyCalc ${add.value.toLocaleString()} vs ${drop.value.toLocaleString()})`);
@@ -285,6 +290,7 @@ function dropReasons(drop: PlayerCard, contribution: number, input: AdvisorInput
   if (drop.last3_ppg != null && drop.season_ppg != null && drop.last3_ppg <= drop.season_ppg - 2) {
     out.push(`Cooling off: ${drop.last3_ppg} pts a game over his last 3 vs ${drop.season_ppg} on the season`);
   }
+  if (drop.ai?.outlook === "down") out.push(`AI read (down, ${drop.ai.confidence} confidence): ${drop.ai.summary}`);
   if (drop.bye_week != null && drop.bye_week >= input.fromWeek) out.push(`Still has his bye (week ${drop.bye_week})`);
   if (drop.playoff_rank != null && drop.playoff_rank >= 22) {
     out.push(`Tough playoff schedule: opponents average rank ${drop.playoff_rank} of 32`);
@@ -364,7 +370,10 @@ export function advise(input: AdvisorInput, options: { candidates?: number; move
       next_week_gain: r1(best.next),
       add_reasons: addReasons(a, d, input, input.usage.get(add)),
       drop_reasons: dropReasons(d, contribution.get(best.drop)?.ros ?? 0, input, input.usage.get(best.drop)),
-      cautions: d.hold_flags,
+      cautions: [
+        ...d.hold_flags,
+        ...(d.ai?.outlook === "up" && d.ai.confidence !== "low" ? [`The AI read of his news says his outlook is rising: ${d.ai.summary}`] : []),
+      ],
     });
   }
   moves.sort((a, b) => b.ros_gain - a.ros_gain);

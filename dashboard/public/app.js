@@ -30,7 +30,17 @@ const S = {
   status: null,
   insights: null,
   matchupView: null,
+  ai: null,
 };
+
+/** Gemini's read of a player's news, if there is one. */
+const aiRead = (id) => S.ai?.reads?.[id] || null;
+
+function aiBadge(id) {
+  const r = aiRead(id)?.read;
+  if (!r || r.outlook === "steady") return null;
+  return h("span", { class: `badge ai ${r.outlook}`, title: `AI read: ${r.summary}` }, r.outlook === "up" ? "AI ▲" : "AI ▼");
+}
 
 const ui = {
   tab: "matchup",
@@ -248,7 +258,7 @@ function teamRow(r, { flash } = {}) {
     h(
       "div",
       { class: "info" },
-      h("div", { class: "name" }, r.name, injuryBadge(r.injury_status), live ? h("span", { class: "badge live" }, "LIVE") : null),
+      h("div", { class: "name" }, r.name, injuryBadge(r.injury_status), aiBadge(r.player_id), live ? h("span", { class: "badge live" }, "LIVE") : null),
       h(
         "div",
         { class: "line" },
@@ -304,6 +314,10 @@ function recommendations() {
     (n) => n.relevance === "mine" && n.kind === "injury" && Date.now() - Date.parse(n.published) < 48 * 3600 * 1000 && n.player_ids.some((id) => starters.has(id)),
   );
   for (const n of fresh.slice(0, 3)) recs.push({ kind: "Injury", tone: "warn", text: n.title, id: n.player_ids[0] });
+  for (const r of (t?.starters || []).filter((x) => x.player_id)) {
+    const ai = aiRead(r.player_id)?.read;
+    if (ai?.outlook === "down" && ai.confidence !== "low") recs.push({ kind: "AI read", tone: "warn", text: `${r.name}: ${ai.summary}`, id: r.player_id });
+  }
   const o = S.odds;
   if (o?.if_win != null && o.if_win - o.if_lose >= 15) {
     recs.push({ kind: "Playoffs", tone: "info", text: `Week ${o.first_week} swings your playoff odds from ${o.if_lose}% to ${o.if_win}%. Start your best lineup.` });
@@ -443,22 +457,6 @@ function matchupBar() {
     h("button", { type: "button", class: "icon-btn", disabled: week <= first, "aria-label": "Previous week", onclick: () => go(week - 1) }, "‹"),
     h("span", { class: "wk" }, `Week ${week ?? ""}`),
     h("button", { type: "button", class: "icon-btn", disabled: week >= cur, "aria-label": "Next week", onclick: () => go(week + 1) }, "›"),
-    v?.options?.length
-      ? h(
-          "select",
-          {
-            class: "chip mu-select",
-            "aria-label": "Matchup",
-            onchange: (e) => {
-              const id = Number(e.target.value);
-              ui.mId = v.options.find((o) => o.matchup_id === id)?.is_yours ? null : id;
-              loadMatchupView();
-              render();
-            },
-          },
-          v.options.map((o) => h("option", { value: o.matchup_id, selected: o.matchup_id === v.matchup_id }, `${o.is_yours ? "★ " : ""}${o.label}`)),
-        )
-      : null,
     sleeperButton("Open in Sleeper", "matchup"),
   );
 }
@@ -530,7 +528,8 @@ function renderMatchup(el) {
       : null,
     started.length ? h("div", { class: "games" }, started.map(gameCard)) : null,
     h("div", { class: "mu-rows" }, rows),
-    live ? [sectionHead("League scores", `Week ${d.week}`), renderScores()] : null,
+    sectionHead("League scores", `Week ${d.week} · tap a matchup to view it`),
+    renderScores(),
     matchupBar(),
   );
   lastPoints = new Map([
@@ -540,24 +539,35 @@ function renderMatchup(el) {
 }
 
 function renderScores() {
-  const m = S.matchups;
-  if (!m) return loading();
+  const v = S.matchupView;
+  if (!v?.options) return loading();
   return h(
     "div",
     { class: "scores" },
-    m.games.map((g) => {
-      const top = Math.max(...g.teams.map((t) => t.points));
-      const any = g.teams.some((t) => t.points > 0);
+    v.options.map((o) => {
+      const top = Math.max(...o.teams.map((t) => t.points));
+      const any = o.teams.some((t) => t.points > 0);
+      const selected = o.matchup_id === v.matchup_id;
       return h(
-        "div",
-        { class: `score-card${g.teams.some((t) => t.is_you) ? " mine" : ""}` },
-        g.teams.map((t) =>
+        "button",
+        {
+          type: "button",
+          class: `score-card${o.is_yours ? " mine" : ""}${selected ? " selected" : ""}`,
+          "aria-pressed": String(selected),
+          "aria-label": `View ${o.label}`,
+          onclick: () => {
+            ui.mId = o.is_yours ? null : o.matchup_id;
+            loadMatchupView();
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            render();
+          },
+        },
+        o.teams.map((t) =>
           h(
             "div",
             { class: `t${any && t.points === top ? " lead" : ""}` },
             avatar(t.avatar, t.team_name),
-            h("span", { class: "nm", title: t.team_name }, t.team_name),
-            t.yet_to_play ? h("span", { class: "left" }, `${t.yet_to_play} left`) : null,
+            h("span", { class: "nm", title: t.team_name }, t.team_name, t.is_you ? h("span", { class: "you" }, " · You") : null),
             h("span", { class: "p" }, t.points.toFixed(2)),
           ),
         ),
@@ -1050,7 +1060,7 @@ function playerCard(p, rank, mode) {
       h(
         "div",
         { class: "info" },
-        h("div", { class: "name" }, p.name, injuryBadge(p.injury_status)),
+        h("div", { class: "name" }, p.name, injuryBadge(p.injury_status), aiBadge(p.player_id)),
         h("div", { class: "line" }, posTag(p.position), ` · ${p.team || "FA"}${p.bye ? ` (${p.bye})` : ""}`, p.owner ? h("span", { class: "owner-tag" }, ` · ${p.is_mine ? "Your team" : p.owner}`) : null),
         h("div", { class: "line" }, gameWhen(p.game), p.game?.opponent ? " " : "", oppText(p.game, p.position)),
       ),
@@ -1163,6 +1173,32 @@ function renderPane() {
 
 // ---------- player sheet ----------
 
+function aiBlock(id) {
+  const stored = aiRead(id);
+  if (!stored) {
+    return S.ai?.enabled ? h("p", { class: "muted", style: { fontSize: "0.8rem", marginTop: "12px" } }, "AI read: not yet (your players and top pickups are read first).") : null;
+  }
+  const r = stored.read;
+  return h(
+    "div",
+    { class: `ai-read ${r.outlook}` },
+    h(
+      "div",
+      { class: "ai-head" },
+      h("span", { class: "ai-tag" }, "AI READ"),
+      h("span", { class: `ai-outlook ${r.outlook}` }, r.outlook === "up" ? "▲ Trending up" : r.outlook === "down" ? "▼ Trending down" : "● Steady"),
+      h("span", { class: "muted" }, `${r.confidence} confidence`),
+    ),
+    h("p", {}, r.summary),
+    r.role || r.health ? h("div", { class: "ai-meta" }, r.role ? `Role: ${r.role}` : null, r.role && r.health ? " · " : null, r.health ? `Health: ${r.health}` : null) : null,
+    r.key_points.length ? h("ul", { class: "reasons" }, r.key_points.map((k) => h("li", {}, k))) : null,
+    stored.sources?.length
+      ? h("div", { class: "ai-meta" }, "Sources: ", stored.sources.map((src, i) => [i ? ", " : "", h("a", { href: src.url, target: "_blank", rel: "noopener noreferrer" }, src.title || "link")]))
+      : null,
+    h("div", { class: "ai-meta" }, `Gemini (${stored.model}) read the latest news and stats ${timeAgo(stored.at)}${stored.searched ? ", with Google Search" : ""}. Context only; projections are Sleeper's.`),
+  );
+}
+
 let sheetEls = null;
 let lastFocus = null;
 
@@ -1217,6 +1253,7 @@ async function openSheet(id) {
       kpi("Recent / game", r1(o?.recent_ppg), "games played"),
       kpi("Trade value", p.value ? p.value.value.toLocaleString() : "–", p.value?.position_rank ? `${p.position}${p.value.position_rank}` : null),
     ),
+    aiBlock(p.player_id),
     o?.hold_flags?.length ? h("div", { class: "caution" }, h("strong", {}, "Think twice before dropping:"), h("ul", {}, o.hold_flags.map((f) => h("li", {}, f)))) : null,
     o?.notes?.length ? [h("h3", {}, "Outlook"), h("ul", { class: "reasons" }, o.notes.map((n) => h("li", {}, n)))] : null,
     o?.quotes?.length ? [h("h3", {}, "What the news says"), h("ul", { class: "quotes" }, o.quotes.map((q) => h("li", {}, h("q", {}, q.text), h("span", { class: "muted" }, ` ${q.source}, ${timeAgo(q.date)}`))))] : null,
@@ -1428,6 +1465,7 @@ async function refreshAll() {
     load("standings"),
     load("transactions"),
     load("insights"),
+    load("ai"),
     loadMatchupView(),
     ...["live", "activity", "advice", "news", "values", "outlook"].map((k) => load(k)),
   ]);
@@ -1441,7 +1479,7 @@ refreshBtn.addEventListener("click", refreshAll);
 
 let stream = null;
 let lastLiveRefetch = 0;
-const TOPICS = ["live", "activity", "advice", "news", "values", "outlook", "status"];
+const TOPICS = ["live", "activity", "advice", "news", "values", "outlook", "status", "ai"];
 
 function openStream() {
   if (stream || !("EventSource" in window)) return;

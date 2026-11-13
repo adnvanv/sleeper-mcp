@@ -362,7 +362,7 @@ and is read with a generic User-Agent.
 | --- | --- | --- |
 | League scores | Sleeper `/league/{id}/matchups/{week}` | Live points in your scoring |
 | Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
-| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, playoff simulation, re-scored with your league settings |
+| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, playoff simulation, Gemini reader (stubbed fetch), re-scored with your league settings |
 | Player news (per player) | ESPN fantasy news API, `?playerId=` for each of your players and the advisor's top pickups | Rotowire blurbs and analysis for exactly your players |
 | Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
 | Play-by-play | ESPN game summary API | Activity stream: every play involving one of your players |
@@ -466,6 +466,28 @@ one), which used to mean no per-player news. IDs now come from Sleeper, then
 FantasyCalc's mapping, then ESPN's player search (exact name), cached in
 `.cache/espn-ids.json`.
 
+**AI article reader** (`feeds/analyst.ts`, optional). With `GEMINI_API_KEY`
+in `.env`, Google Gemini reads each of your players' (and the advisor's top
+pickups') recent news, games played, Sleeper projection and Sleeper-wide
+adds/drops, and returns a structured take: outlook vs the projection
+(up/steady/down) with confidence, role, health, a two-sentence summary and up
+to three key points. It's told to use only the facts given and not to compute
+new statistics. A player is re-read when his news or games change, or after
+6 hours on game days / 24 hours otherwise; a few players per run, spaced for
+free-tier rate limits; results are cached in `.cache/ai-reads.json`.
+
+Models are tried in order (`GEMINI_MODELS`, default `gemini-flash-latest`,
+`gemini-3-flash-preview`, `gemini-3.1-flash-lite`); an overloaded, missing,
+rate-limited or hanging model (25 s timeout) is skipped for a while. Google
+Search grounding is tried first and switched off for six hours if the plan
+rejects it (free keys do), so reads then rely on the collected news.
+
+AI reads never change projections. They appear as an "AI READ" box on the
+player sheet, AI ▲/▼ badges on players, a reason on advisor moves, a caution
+when a move would drop a player whose read is trending up, and a Home alert
+for starters read as trending down with medium or high confidence. Only
+player names, stats and public news are sent to Google.
+
 **Per-player news.** On top of the league-wide feeds (Rotowire RSS and ESPN
 news every 2 minutes, every minute on game days), the poller asks ESPN's
 fantasy news API for your players and the advisor's top ten pickups on a
@@ -513,7 +535,8 @@ outside image host the Content-Security-Policy allows).
   tab, the matchup bar and the player sheet link into Sleeper
   (`sleeper.com/leagues/<id>/…`), which opens the Sleeper app on a phone.
 - **Matchup bar** pinned to the bottom of the MATCHUP tab: previous/next
-  week and a selector for any matchup in the league. Past weeks show final
+  week. The league scores below your matchup are buttons: tap one to view
+  that matchup. Past weeks show final
   scores with each starter's stat line (`/api/matchup?week=&id=`).
 - **Installable.** Served privately over HTTPS at
   `https://<server>.<tailnet>.ts.net:8443` by `tailscale serve` (tailnet
@@ -572,7 +595,7 @@ outside image host the Content-Security-Policy allows).
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 124 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 132 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out

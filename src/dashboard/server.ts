@@ -179,7 +179,10 @@ async function main() {
     process.exit(1);
   }
 
-  const poller = await startFeeds(config.livePollSeconds * 1000);
+  const poller = await startFeeds(config.livePollSeconds * 1000, {
+    geminiApiKey: config.geminiApiKey,
+    geminiModels: config.geminiModels,
+  });
   const server = createDashboardServer({
     panels,
     getContext: resolveContext,

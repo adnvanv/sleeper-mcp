@@ -50,6 +50,10 @@ export interface SleeperConfig {
   mcpHttpSecret?: string;
   /** Dashboard live polling, in seconds, while one of your players is in a game. */
   livePollSeconds: number;
+  /** Google Gemini key for the AI article reader (optional). */
+  geminiApiKey?: string;
+  /** Comma-separated Gemini models to try in order (optional). */
+  geminiModels?: string[];
 }
 
 export const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
@@ -86,6 +90,8 @@ export function loadConfig(
     mcpHttpHost: pick("MCP_HTTP_HOST") || DEFAULT_MCP_HTTP_HOST,
     mcpHttpPort: parsePort(pick("MCP_HTTP_PORT"), DEFAULT_MCP_HTTP_PORT),
     mcpHttpSecret: pick("MCP_HTTP_SECRET"),
+    geminiApiKey: pick("GEMINI_API_KEY"),
+    geminiModels: pick("GEMINI_MODELS")?.split(",").map((m) => m.trim()).filter(Boolean),
     livePollSeconds: parseSeconds(
       pick("LIVE_POLL_SECONDS"),
       DEFAULT_LIVE_POLL_SECONDS,

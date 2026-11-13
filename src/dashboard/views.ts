@@ -751,6 +751,15 @@ export async function matchupView(st: State, weekArg?: number, matchupArg?: numb
         matchup_id: mid,
         is_yours: ms.some((m) => m.roster_id === mine?.roster_id),
         label: ms.map((m) => `${nameOf(m.roster_id)} ${r1(m.points || 0)}`).join(" vs "),
+        teams: ms
+          .sort((x, y) => Number(y.roster_id === mine?.roster_id) - Number(x.roster_id === mine?.roster_id))
+          .map((m) => ({
+            roster_id: m.roster_id,
+            team_name: nameOf(m.roster_id),
+            avatar: avatarOf(m.roster_id),
+            points: r1(m.points || 0),
+            is_you: m.roster_id === mine?.roster_id,
+          })),
       })),
   };
 }

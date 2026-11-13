@@ -268,10 +268,13 @@ export async function getTransactions(ctx: DashboardContext) {
 let poller: FeedPoller | null = null;
 
 /** Start the background poller once; panels below read its latest data. */
-export async function startFeeds(livePollMs: number): Promise<FeedPoller> {
+export async function startFeeds(
+  livePollMs: number,
+  ai: { geminiApiKey?: string; geminiModels?: string[] } = {},
+): Promise<FeedPoller> {
   if (poller) return poller;
   const ctx = await resolveContext();
-  poller = new FeedPoller({ ...ctx, livePollMs });
+  poller = new FeedPoller({ ...ctx, livePollMs, ...ai });
   await poller.start();
   return poller;
 }
@@ -298,6 +301,7 @@ export const panels = {
   "free-agents": getFreeAgents,
   transactions: getTransactions,
   activity: feedPanel("activity"),
+  ai: feedPanel("ai"),
   advice: feedPanel("advice"),
   live: feedPanel("live"),
   news: feedPanel("news"),
