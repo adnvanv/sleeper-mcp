@@ -18,6 +18,7 @@ import {
 } from "../season.js";
 import type { NFLGame, SleeperMatchup, SleeperPlayer } from "../types.js";
 import { FeedPoller, type Topic } from "../feeds/poller.js";
+import { AVATAR_URL, userAvatar, playerView, playersIndex, playoffOdds, teamView } from "./views.js";
 
 const LIVE_SCHEDULE_MS = 5 * 60 * 1000;
 const RISKY = new Set(["Out", "IR", "Doubtful", "Suspended", "PUP"]);
@@ -57,6 +58,8 @@ export async function getSummary(ctx: DashboardContext) {
   const s = mine?.settings;
   return {
     league: data.league.name,
+    avatar: AVATAR_URL((data.league as { avatar?: string | null }).avatar),
+    league_id: ctx.leagueId,
     season: data.league.season,
     season_type: data.nflState.season_type,
     week: data.currentWeek,
@@ -110,6 +113,7 @@ export async function getMatchups(ctx: DashboardContext) {
         (id) => !gameFinished(schedule, week, data.players.get(id)?.team),
       ).length,
       is_you: m.roster_id === myRoster?.roster_id,
+      avatar: roster ? userAvatar(userMap.get(roster.owner_id)) : null,
     };
   };
 
@@ -272,6 +276,15 @@ export async function startFeeds(livePollMs: number): Promise<FeedPoller> {
   return poller;
 }
 
+/** Views computed from the poller's state; wait until projections are in. */
+const viewPanel =
+  <T>(fn: (st: ReturnType<FeedPoller["state"]>, params: URLSearchParams) => Promise<T>) =>
+  async (_ctx: DashboardContext, params: URLSearchParams) => {
+    if (!poller) throw new Error("Live feeds are not running");
+    await poller.waitFor("advice", 60 * 1000).catch(() => undefined);
+    return fn(poller.state(), params);
+  };
+
 const feedPanel = (topic: Topic) => async () => {
   if (!poller) throw new Error("Live feeds are not running");
   return (await poller.waitFor(topic)).data;
@@ -292,6 +305,14 @@ export const panels = {
   outlook: feedPanel("outlook"),
   values: feedPanel("values"),
   feeds: feedPanel("status"),
+  team: viewPanel((st, q) => teamView(st, q.get("roster") ? Number(q.get("roster")) : undefined)),
+  player: viewPanel((st, q) => {
+    const id = q.get("id");
+    if (!id || !/^[A-Za-z0-9]{1,12}$/.test(id)) throw new Error("Missing or bad player id");
+    return playerView(st, id);
+  }),
+  players: viewPanel((st) => playersIndex(st)),
+  odds: viewPanel((st) => playoffOdds(st)),
 } as const;
 
 export type PanelName = keyof typeof panels;

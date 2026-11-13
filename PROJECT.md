@@ -362,7 +362,7 @@ and is read with a generic User-Agent.
 | --- | --- | --- |
 | League scores | Sleeper `/league/{id}/matchups/{week}` | Live points in your scoring |
 | Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
-| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, re-scored with your league settings |
+| Projections | Sleeper `/projections/nfl/{season}/{week}` (this week, with fresh injury status) and `/v1/projections/…/{week}` (every remaining week) | Projected finals, win chance and the waiver advisor, playoff simulation, re-scored with your league settings |
 | Player news (per player) | ESPN fantasy news API, `?playerId=` for each of your players and the advisor's top pickups | Rotowire blurbs and analysis for exactly your players |
 | Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
 | Play-by-play | ESPN game summary API | Activity stream: every play involving one of your players |
@@ -479,32 +479,56 @@ the two projected finals with a normal approximation. It's a rough guide.
 
 ### Frontend (`dashboard/public/`)
 
-- Plain HTML, CSS and ES modules, with no build step and no CDN. The page
-  works offline from Sleeper's own servers except for the API data.
-- All content is built with DOM methods (`createElement`, `textContent`),
-  never `innerHTML`. Team names are typed by league members and could contain
-  markup.
-- **Panels:** this week's matchups (yours pinned, live scores, starters left
-  to play), your roster (warnings for empty, injured or bye starters, with
-  badges), sortable all-play standings (with an all-play bar and colored
-  luck), trending free agents, and a filterable moves feed.
-- **Refresh:** `refresh.js` decides the interval in US Eastern time: every
-  2 minutes during game windows (Thursday night, Sunday 9am to Monday 1am,
-  Monday night, Saturdays in December and January, and Friday nights in
-  September), and every 15 minutes otherwise. A hidden browser tab isn't
-  polled; it catches up when shown again.
-- **Tabs:** Live (your matchup, league scores), Waivers (recommended moves,
-  drop candidates, best available), Team (roster, schedule
-  strength, news), Players (usage risers, trending free agents), League
-  (standings, moves) and Trades (values and calculator). The tab is kept in
-  the URL hash (`#team`), so it survives a reload and can be bookmarked. The
-  activity stream stays above the tabs.
-- **Theme:** dark only, in the style of the Sleeper mobile app (navy
-  surfaces, mint accent), as CSS variables in `styles.css`.
-- **Responsive:** on wide screens there are two independent column stacks, so
-  there are no gaps. Under 960px each tab is one column (main panel first).
-  The tab bar sticks to the top while scrolling. Under 600px, secondary
-  columns are hidden and the page never scrolls sideways (checked at 375px).
+Styled after the Sleeper app's fantasy mode: deep navy, mint accent,
+Sleeper's position colors (QB red, RB green, WR blue, TE orange, K purple,
+DEF brown, W/R/T flex as a three-color pill), player headshots with team-logo
+badges and manager avatars from Sleeper's CDN (`sleepercdn.com`, the only
+outside image host the Content-Security-Policy allows).
+
+- **Split screen.** League views on the left, a players pane on the right.
+  Under 1100px the pane becomes a PLAYERS tab.
+- **Left tabs:** MATCHUP (both lineups side by side, slot by slot, with live
+  points, green/red pace, win chance, live games and a scoring ticker, then
+  league scores), TEAM (team card with win bar, start/sit tips, starters,
+  bench, IR, rest-of-season schedule strength), WAIVERS (advisor moves and
+  drop candidates), LEAGUE (playoff odds, all-play standings, recent moves),
+  TRADE (FantasyCalc calculator) and NEWS.
+- **Players pane:** search across every relevant player, plus AVAILABLE
+  (free agents by this week's or rest-of-season adjusted projection, with
+  position pills), TREND (Sleeper-wide adds among your free agents), LEADERS
+  (season points in your scoring) and ACTIVITY (your players' plays and
+  news). Each card shows ROS points a game, last-3 average, snap share,
+  targets, adds and season total, plus the advisor's gain if it recommends
+  him.
+- **Player sheet.** Tap any player anywhere for a slide-over (bottom sheet on
+  phones): this week's adjusted and Sleeper projections, expected and recent
+  points a game, trade value, hold warnings, outlook notes, news quotes,
+  remaining schedule colored by matchup, game log and news.
+- **Activity bar** under the header shows your players' latest play or news;
+  tapping it opens the full activity list.
+- **Updates.** Panels load from `/api/<panel>` (some take query parameters:
+  `player?id=`, `team?roster=`) and refresh on the Eastern-time schedule in
+  `refresh.js`. Live scores, activity, advice, news, values and schedule
+  strength arrive over `/api/stream`; while your players are on, the team and
+  league scores are refetched every 15 seconds.
+- **Safety.** All content is built with DOM methods, never `innerHTML`, and
+  failed images fall back to initials.
+
+### Computed views (`src/dashboard/views.ts`)
+
+- **Team:** each starter and bench player with game time, opponent and its
+  matchup rank, adjusted and Sleeper projections, live points and pace.
+  **Start/sit tips** rebuild your best lineup for this week from adjusted
+  projections among players whose games haven't started (out/IR players
+  count as 0) and list each swap with its gain, plus warnings for empty,
+  bye-week or injured starters.
+- **Playoff odds:** 10,000 seeded simulations of the remaining regular-season
+  weeks. Each team scores its best projected lineup (adjusted projections)
+  plus noise (standard deviation 15% of the mean + 6), Sleeper's real future
+  pairings decide each game, median games count when enabled, and seeding is
+  by wins then points for. It also reports your odds if you win or lose this
+  week.
+- **Players index** and **player detail** feed the pane and the sheet.
 
 ## 9. Testing
 
@@ -512,7 +536,7 @@ the two projected finals with a normal approximation. It's a rough guide.
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 116 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 123 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out

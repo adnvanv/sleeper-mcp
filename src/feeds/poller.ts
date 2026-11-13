@@ -486,6 +486,25 @@ export class FeedPoller extends EventEmitter {
     };
   }
 
+  /** Read-only view of the latest feed state, for the dashboard's computed views. */
+  state() {
+    return {
+      leagueId: this.opts.leagueId,
+      userId: this.opts.userId,
+      league: () => this.league(),
+      games: this.games,
+      liveStats: this.liveStats,
+      weekProjections: this.weekProjections,
+      outlooks: this.outlooks,
+      allowed: this.allowed,
+      weeklyRows: this.weeklyRows,
+      usage: this.usageMap,
+      news: this.taggedNews,
+      values: this.values,
+      injuries: this.injuries,
+    };
+  }
+
   // ---------- snapshots ----------
 
   private publish(topic: Topic, data: unknown) {

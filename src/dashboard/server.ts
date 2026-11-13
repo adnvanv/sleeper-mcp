@@ -30,10 +30,10 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
   "Content-Security-Policy":
-    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'",
+    "default-src 'self'; img-src 'self' data: https://sleepercdn.com; style-src 'self'; script-src 'self'; connect-src 'self'",
 };
 
-type PanelFn<C> = (ctx: C) => Promise<unknown>;
+type PanelFn<C> = (ctx: C, params: URLSearchParams) => Promise<unknown>;
 
 export interface StreamSource {
   /** Current data for every topic, sent when a browser connects. */
@@ -133,7 +133,7 @@ export function createDashboardServer<C>(options: DashboardOptions<C>): Server {
         : undefined;
       if (!panel) return json(404, { error: `Unknown panel: ${name}` });
       try {
-        const data = await panel(await context());
+        const data = await panel(await context(), url.searchParams);
         return json(200, { data, updated: new Date().toISOString() });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

@@ -4,185 +4,78 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#151925" />
-    <title>League Dashboard</title>
+    <meta name="theme-color" content="#0d1020" />
+    <title>League</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
     <script type="module" src="app.js"></script>
   </head>
   <body>
-    <header class="topbar">
-      <div class="title">
-        <h1 id="league-name">Loading league…</h1>
-        <p id="league-meta" class="muted"></p>
-      </div>
-      <div class="controls">
-        <span id="refresh-status" class="pill" aria-live="polite"></span>
-        <button id="refresh" type="button" class="btn">Refresh</button>
-      </div>
-    </header>
+    <div class="app" id="app">
+      <div class="main">
+        <header class="league-head">
+          <div class="league-title">
+            <img class="avatar" id="league-avatar" alt="" hidden />
+            <h1 id="league-name">Loading…</h1>
+            <div class="league-meta">
+              <span id="status" class="pill" aria-live="polite"></span>
+              <button id="refresh" type="button" class="icon-btn">Refresh</button>
+            </div>
+          </div>
+          <nav class="tabs" role="tablist" aria-label="Sections">
+            <button type="button" role="tab" data-tab="matchup">Matchup</button>
+            <button type="button" role="tab" data-tab="team">Team</button>
+            <button type="button" role="tab" data-tab="waivers">Waivers</button>
+            <button type="button" role="tab" data-tab="league">League</button>
+            <button type="button" role="tab" data-tab="trade">Trade</button>
+            <button type="button" role="tab" data-tab="news">News</button>
+            <button type="button" role="tab" data-tab="players" class="tab-players">Players</button>
+          </nav>
+        </header>
 
-    <section class="panel activity" data-panel="activity" aria-label="Your players' activity">
-      <header class="panel-head">
-        <h2>Activity</h2>
-        <span class="panel-note" data-note></span>
-      </header>
-      <div class="panel-body" data-body></div>
-    </section>
+        <div class="activity-bar" id="activity-bar" role="button" tabindex="0" aria-label="Open your players' activity">
+          <span class="label">ACTIVITY</span>
+          <span class="text" id="activity-text">Loading…</span>
+        </div>
 
-    <nav class="tabs" role="tablist" aria-label="Sections">
-      <button type="button" role="tab" data-tab="live" id="tab-live" aria-controls="view-live">Live</button>
-      <button type="button" role="tab" data-tab="waivers" id="tab-waivers" aria-controls="view-waivers">Waivers</button>
-      <button type="button" role="tab" data-tab="team" id="tab-team" aria-controls="view-team">Team</button>
-      <button type="button" role="tab" data-tab="players" id="tab-players" aria-controls="view-players">Players</button>
-      <button type="button" role="tab" data-tab="league" id="tab-league" aria-controls="view-league">League</button>
-      <button type="button" role="tab" data-tab="trades" id="tab-trades" aria-controls="view-trades">Trades</button>
-    </nav>
+        <div class="main-views">
+          <section class="view" data-view="matchup" aria-label="Matchup"></section>
+          <section class="view" data-view="team" aria-label="Team" hidden></section>
+          <section class="view" data-view="waivers" aria-label="Waivers" hidden></section>
+          <section class="view" data-view="league" aria-label="League" hidden></section>
+          <section class="view" data-view="trade" aria-label="Trade" hidden></section>
+          <section class="view" data-view="news" aria-label="News" hidden></section>
+        </div>
 
-    <main>
-      <div class="view grid" id="view-live" role="tabpanel" aria-labelledby="tab-live" data-view="live">
-        <div class="col col-main">
-          <section class="panel" data-panel="live">
-            <header class="panel-head">
-              <h2>Your matchup</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-        <div class="col col-side">
-          <section class="panel" data-panel="matchups">
-            <header class="panel-head">
-              <h2>League scores</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-      </div>
-
-      <div class="view grid" id="view-waivers" role="tabpanel" aria-labelledby="tab-waivers" data-view="waivers" hidden>
-        <div class="col col-main">
-          <section class="panel" data-panel="advice">
-            <header class="panel-head">
-              <h2>Recommended moves</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-        <div class="col col-side">
-          <section class="panel" data-panel="drops">
-            <header class="panel-head">
-              <h2>Drop candidates</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-          <section class="panel" data-panel="available">
-            <header class="panel-head">
-              <h2>Best available</h2>
-              <div class="chips" role="group" aria-label="Position" data-filters></div>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
+        <footer class="footer">
+          <p>
+            Read-only view of public data from Sleeper, ESPN, Rotowire and
+            FantasyCalc. Points are in your league's scoring; projections are
+            Sleeper's, adjusted for recent usage, news and market activity.
+          </p>
+          <details id="feeds">
+            <summary>Data feeds <span id="feeds-mode"></span></summary>
+            <ul class="feed-status" id="feeds-list"></ul>
+          </details>
+        </footer>
       </div>
 
-      <div class="view grid" id="view-team" role="tabpanel" aria-labelledby="tab-team" data-view="team" hidden>
-        <div class="col col-main">
-          <section class="panel" data-panel="roster">
-            <header class="panel-head">
-              <h2>My roster</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-          <section class="panel" data-panel="outlook">
-            <header class="panel-head">
-              <h2>Rest-of-season schedule</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
+      <aside class="pane" aria-label="Players">
+        <div class="pane-top">
+          <label class="search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+            <input id="search" type="search" placeholder="Search players…" autocomplete="off" aria-label="Search players" />
+          </label>
+          <div class="pane-tabs" role="tablist" aria-label="Players lists">
+            <button type="button" role="tab" data-pane="available">Available</button>
+            <button type="button" role="tab" data-pane="trend">Trend</button>
+            <button type="button" role="tab" data-pane="leaders">Leaders</button>
+            <button type="button" role="tab" data-pane="activity">Activity</button>
+          </div>
         </div>
-        <div class="col col-side">
-          <section class="panel" data-panel="news">
-            <header class="panel-head">
-              <h2>Player news</h2>
-              <div class="chips" role="group" aria-label="Filter news" data-filters></div>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-      </div>
-
-      <div class="view grid" id="view-players" role="tabpanel" aria-labelledby="tab-players" data-view="players" hidden>
-        <div class="col col-main">
-          <section class="panel" data-panel="usage">
-            <header class="panel-head">
-              <h2>Usage risers</h2>
-              <span class="panel-note" data-note></span>
-              <div class="chips" role="group" aria-label="Filter risers" data-filters></div>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-        <div class="col col-side">
-          <section class="panel" data-panel="free-agents">
-            <header class="panel-head">
-              <h2>Trending free agents</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-      </div>
-
-      <div class="view grid" id="view-league" role="tabpanel" aria-labelledby="tab-league" data-view="league" hidden>
-        <div class="col col-main">
-          <section class="panel" data-panel="standings">
-            <header class="panel-head">
-              <h2>Standings</h2>
-              <span class="panel-note" data-note></span>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-        <div class="col col-side">
-          <section class="panel" data-panel="transactions">
-            <header class="panel-head">
-              <h2>Recent moves</h2>
-              <div class="chips" role="group" aria-label="Filter moves" data-filters></div>
-            </header>
-            <div class="panel-body" data-body></div>
-          </section>
-        </div>
-      </div>
-
-      <div class="view single" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" data-view="trades" hidden>
-        <section class="panel" data-panel="values">
-          <header class="panel-head">
-            <h2>Trade values</h2>
-            <span class="panel-note" data-note></span>
-            <div class="chips" role="group" aria-label="Trade partner" data-filters></div>
-          </header>
-          <div class="panel-body" data-body></div>
-        </section>
-      </div>
-    </main>
-
-    <footer class="footer muted">
-      <p>
-        Read-only view of public data from Sleeper (league, live scores,
-        projections, usage), ESPN (game clock, play-by-play, news), Rotowire
-        (player news) and FantasyCalc (trade values). Points are in your
-        league's scoring.
-      </p>
-      <details class="feeds" data-panel="feeds">
-        <summary>Data feeds <span class="panel-note" data-note></span></summary>
-        <div data-body></div>
-      </details>
-    </footer>
+        <div class="pane-filters" id="pane-filters"></div>
+        <div class="pane-body" id="pane-body"></div>
+      </aside>
+    </div>
   </body>
 </html>

@@ -215,6 +215,7 @@ export interface LivePlayer {
   game: {
     state: GameState | "bye";
     detail: string;
+    start: string | null;
     opponent: string | null;
     has_ball: boolean;
     red_zone: boolean;
@@ -268,6 +269,7 @@ export function liveSide(input: {
         ? {
             state: game.state,
             detail: game.detail,
+            start: game.start,
             opponent:
               game.home.team === team
                 ? `vs ${game.away.team}`
@@ -275,7 +277,7 @@ export function liveSide(input: {
             has_ball: game.state === "in" && game.possession === team,
             red_zone: game.state === "in" && game.red_zone && game.possession === team,
           }
-        : { state: "bye", detail: "No game", opponent: null, has_ball: false, red_zone: false },
+        : { state: "bye", detail: "No game", start: null, opponent: null, has_ball: false, red_zone: false },
     };
   });
   const list = starters.filter((s): s is LivePlayer => !!s);
