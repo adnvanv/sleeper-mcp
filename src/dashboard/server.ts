@@ -35,14 +35,31 @@ const SECURITY_HEADERS = {
 
 type PanelFn<C> = (ctx: C) => Promise<unknown>;
 
+export interface StreamSource {
+  /** Current data for every topic, sent when a browser connects. */
+  snapshots(): [string, { data: unknown; updated: string }][];
+  /** Call listener on every update; returns an unsubscribe function. */
+  subscribe(
+    listener: (topic: string, snap: { data: unknown; updated: string }) => void,
+  ): () => void;
+  /** Count an open page (fast polling only runs while someone is watching). */
+  addViewer?(): () => void;
+}
+
 export interface DashboardOptions<C> {
   panels: Record<string, PanelFn<C>>;
   getContext: () => Promise<C>;
   publicDir?: string;
+  /** Live updates pushed to the page at /api/stream (server-sent events). */
+  stream?: StreamSource;
 }
 
+const MAX_STREAMS = 20;
+const HEARTBEAT_MS = 25 * 1000;
+
 export function createDashboardServer<C>(options: DashboardOptions<C>): Server {
-  const { panels, getContext, publicDir = PUBLIC_DIR } = options;
+  const { panels, getContext, publicDir = PUBLIC_DIR, stream } = options;
+  let openStreams = 0;
   let contextPromise: Promise<C> | null = null;
   const context = () => {
     if (!contextPromise) {
@@ -82,6 +99,35 @@ export function createDashboardServer<C>(options: DashboardOptions<C>): Server {
     if (url.pathname.startsWith("/api/")) {
       const name = url.pathname.slice("/api/".length);
       if (name === "health") return json(200, { ok: true });
+      if (name === "stream") {
+        if (!stream) return json(404, { error: "No live stream" });
+        if (req.method === "HEAD") return send(200, "", "text/event-stream");
+        if (openStreams >= MAX_STREAMS) {
+          return json(503, { error: "Too many open live connections" });
+        }
+        openStreams++;
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-store",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+          ...SECURITY_HEADERS,
+        });
+        const write = (topic: string, snap: unknown) =>
+          res.write(`event: ${topic}\ndata: ${JSON.stringify(snap)}\n\n`);
+        res.write("retry: 3000\n\n");
+        for (const [topic, snap] of stream.snapshots()) write(topic, snap);
+        const unsubscribe = stream.subscribe(write);
+        const removeViewer = stream.addViewer?.() || (() => {});
+        const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
+        req.on("close", () => {
+          openStreams--;
+          clearInterval(heartbeat);
+          unsubscribe();
+          removeViewer();
+        });
+        return;
+      }
       const panel = Object.prototype.hasOwnProperty.call(panels, name)
         ? panels[name]
         : undefined;
@@ -123,7 +169,7 @@ export function createDashboardServer<C>(options: DashboardOptions<C>): Server {
 
 async function main() {
   const { config } = await import("../config.js");
-  const { panels, resolveContext } = await import("./data.js");
+  const { panels, resolveContext, startFeeds } = await import("./data.js");
 
   if (!config.username) {
     console.error(
@@ -132,9 +178,18 @@ async function main() {
     process.exit(1);
   }
 
+  const poller = await startFeeds(config.livePollSeconds * 1000);
   const server = createDashboardServer({
     panels,
     getContext: resolveContext,
+    stream: {
+      snapshots: () => poller.allSnapshots(),
+      subscribe: (listener) => {
+        poller.on("update", listener);
+        return () => poller.off("update", listener);
+      },
+      addViewer: () => poller.addViewer(),
+    },
   });
   server.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EADDRINUSE") {

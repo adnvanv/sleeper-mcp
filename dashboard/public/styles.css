@@ -215,20 +215,35 @@ th button:focus-visible {
   .col {
     display: contents;
   }
+  .area-live {
+    order: 0;
+  }
   .area-matchups {
     order: 1;
   }
   .area-roster {
     order: 2;
   }
-  .area-standings {
+  .area-news {
     order: 3;
   }
-  .area-free-agents {
+  .area-usage {
     order: 4;
   }
-  .area-transactions {
+  .area-outlook {
     order: 5;
+  }
+  .area-values {
+    order: 6;
+  }
+  .area-standings {
+    order: 7;
+  }
+  .area-free-agents {
+    order: 8;
+  }
+  .area-transactions {
+    order: 9;
   }
   .topbar {
     padding: 16px 16px 4px;
@@ -619,5 +634,377 @@ tr.group td {
 @media (prefers-reduced-motion: no-preference) {
   .bar-fill {
     transition: width 0.3s ease;
+  }
+}
+
+/* ---------- Live ---------- */
+.area-live.is-live {
+  border-color: var(--accent);
+}
+
+.scoreline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.sl-team {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sl-team:last-child {
+  text-align: right;
+}
+
+.sl-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-pts {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.sl-mid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.sl-win {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.bar-track.wide {
+  display: block;
+  width: 96px;
+}
+
+.sub {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ticker {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 0.85rem;
+}
+
+.tk-delta {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+.games {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.game {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.game.in {
+  border-color: var(--accent);
+}
+
+.game.redzone {
+  background: var(--danger-soft);
+}
+
+.game.post {
+  color: var(--muted);
+}
+
+.gteam {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+.gteam.leading {
+  font-weight: 700;
+}
+
+.poss {
+  color: var(--accent);
+}
+
+.gdetail,
+.lastplay {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.lastplay {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.live-side h3,
+.trade-cols h3 {
+  font-size: 0.9rem;
+  font-weight: 650;
+  margin: 0 0 4px;
+}
+
+.statline {
+  color: var(--text);
+}
+
+td.strong {
+  font-weight: 650;
+}
+
+tr.playing td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.badge.live-badge {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.badge.done {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.badge.ball {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.badge.rz {
+  color: var(--neg);
+  background: var(--danger-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  tr.bump td {
+    animation: bump 2.5s ease-out;
+  }
+  @keyframes bump {
+    from {
+      background: var(--accent-soft);
+    }
+    to {
+      background: transparent;
+    }
+  }
+}
+
+/* ---------- News ---------- */
+.sub-chips {
+  margin-bottom: 6px;
+}
+
+.news li {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.news-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.news-head a {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 550;
+}
+
+.news-head a:hover {
+  text-decoration: underline;
+}
+
+.news-sum {
+  font-size: 0.85rem;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.type.kind-returning {
+  color: var(--pos);
+}
+
+.type.kind-injury {
+  color: var(--neg);
+}
+
+.type.kind-role {
+  color: var(--accent);
+}
+
+.type.kind-transaction {
+  color: var(--warn);
+}
+
+.delta {
+  font-size: 0.78rem;
+}
+
+/* ---------- Schedule strength ---------- */
+.scroll-x {
+  overflow-x: auto;
+}
+
+.sos-table td.sos {
+  text-align: center;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.sos .rk {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.sos.easy {
+  background: var(--accent-soft);
+  color: var(--pos);
+}
+
+.sos.hard {
+  background: var(--danger-soft);
+  color: var(--neg);
+}
+
+.sos.bye {
+  color: var(--muted);
+}
+
+th.po {
+  color: var(--accent);
+}
+
+/* ---------- Trade values ---------- */
+select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  max-width: 100%;
+}
+
+.verdict {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  margin-bottom: 10px;
+}
+
+.verdict.pos {
+  background: var(--accent-soft);
+  color: var(--pos);
+}
+
+.verdict.neg {
+  background: var(--danger-soft);
+  color: var(--neg);
+}
+
+.trade-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.picks {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.picks label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.league-values {
+  margin-top: 10px;
+}
+
+.upcoming {
+  margin-bottom: 12px;
+}
+
+.upcoming summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+}
+
+.league-values summary,
+.feeds summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.list li.mine {
+  font-weight: 650;
+}
+
+/* ---------- Feed status ---------- */
+.feeds {
+  margin-top: 8px;
+}
+
+.feed-status li {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 600px) {
+  .sl-pts {
+    font-size: 1.5rem;
+  }
+  .scoreline {
+    gap: 8px;
   }
 }

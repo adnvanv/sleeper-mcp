@@ -263,9 +263,6 @@ export class SleeperClient {
       this.players.size > 0 &&
       now - this.playersLastUpdated < this.PLAYERS_CACHE_DURATION
     ) {
-      console.error(
-        `Using cached player data (${this.players.size} players, age: ${Math.round((now - this.playersLastUpdated) / (60 * 60 * 1000))}h)`,
-      );
       return this.players;
     }
 

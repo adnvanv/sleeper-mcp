@@ -1,64 +1,15 @@
 import { isGameWindow, refreshInterval } from "./refresh.js";
 
-// ---------- DOM helpers (never innerHTML: team names are user input) ----------
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs || {})) {
-    if (value == null || value === false) continue;
-    if (key === "class") el.className = value;
-    // CSP forbids inline style attributes; CSSOM assignment is allowed
-    else if (key === "style") Object.assign(el.style, value);
-    else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
-    else el.setAttribute(key, value === true ? "" : String(value));
-  }
-  for (const child of children.flat()) {
-    if (child == null || child === false) continue;
-    el.append(
-      child instanceof Node ? child : document.createTextNode(String(child)),
-    );
-  }
-  return el;
-}
-
-const fmt1 = (n) => (n == null ? "–" : Number(n).toFixed(1));
-const fmtSigned = (n) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2));
-const fmtCount = (n) =>
-  n >= 1e6
-    ? `${(n / 1e6).toFixed(1)}M`
-    : n >= 1e3
-      ? `${Math.round(n / 1e3)}K`
-      : String(n);
-const record = (r) => `${r.wins}-${r.losses}${r.ties ? `-${r.ties}` : ""}`;
-
-function timeAgo(iso) {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  return `${days}d ago`;
-}
-
-function injuryBadge(status, onBye) {
-  const badges = [];
-  if (onBye) badges.push(h("span", { class: "badge bye" }, "BYE"));
-  if (!status) return badges;
-  const s = status.toLowerCase();
-  const cls = s === "questionable" ? "q" : "out";
-  const label =
-    {
-      questionable: "Q",
-      doubtful: "D",
-      out: "OUT",
-      ir: "IR",
-      suspended: "SUS",
-      pup: "PUP",
-    }[s] || status;
-  badges.push(h("span", { class: `badge ${cls}`, title: status }, label));
-  return badges;
-}
+import {
+  h,
+  fmt1,
+  fmtSigned,
+  fmtCount,
+  record,
+  timeAgo,
+  injuryBadge,
+} from "./dom.js";
+import { feedRenderers, feedTopics } from "./feeds.js";
 
 // ---------- Panels ----------
 
@@ -428,6 +379,8 @@ const renderers = {
   },
 };
 
+Object.assign(renderers, feedRenderers);
+
 let standingsSort = { key: "actual_rank", dir: "asc" };
 let feedFilter = "all";
 
@@ -499,7 +452,12 @@ const refreshBtn = document.getElementById("refresh");
 const statusEl = document.getElementById("refresh-status");
 
 function updateStatus() {
-  const live = isGameWindow();
+  if (liveMode === "fast") {
+    statusEl.classList.add("live");
+    statusEl.textContent = `Live · your players are on · every ${livePollSeconds}s`;
+    return;
+  }
+  const live = isGameWindow() || liveMode === "game_day";
   const mins = Math.max(0, Math.round((nextRefresh - Date.now()) / 60000));
   const updated = lastRefresh
     ? new Date(lastRefresh).toLocaleTimeString([], {
@@ -547,6 +505,58 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 setInterval(updateStatus, 30 * 1000);
+
+// ---------- Live stream (server-sent events from the background poller) ----------
+
+let stream = null;
+let liveMode = "idle";
+let livePollSeconds = 2;
+let lastScoresRefresh = 0;
+
+function onFeed(topic, panel, event) {
+  let payload;
+  try {
+    payload = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+  const { data } = payload;
+  try {
+    renderers[panel](data, panelEls(panel));
+  } catch (error) {
+    console.error(`Rendering ${panel} failed`, error);
+  }
+  if (topic === "status") {
+    liveMode = data.mode;
+    livePollSeconds = data.live_poll_seconds;
+    updateStatus();
+  }
+  // While your players are on, keep the league scoreboard and roster fresh too.
+  if (topic === "live" && data.mode === "fast" && Date.now() - lastScoresRefresh > 30 * 1000) {
+    lastScoresRefresh = Date.now();
+    loadPanel("matchups");
+    loadPanel("roster");
+  }
+}
+
+function openStream() {
+  if (stream || !("EventSource" in window)) return;
+  stream = new EventSource("api/stream");
+  for (const [topic, panel] of Object.entries(feedTopics)) {
+    stream.addEventListener(topic, (event) => onFeed(topic, panel, event));
+  }
+}
+
+function closeStream() {
+  stream?.close();
+  stream = null;
+}
+
+// A hidden tab doesn't hold the stream open, so the server can slow down.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") openStream();
+  else closeStream();
+});
 refreshBtn.addEventListener("click", refreshAll);
 
 // ---------- Theme toggle (auto / light / dark) ----------
@@ -580,3 +590,4 @@ themeBtn.addEventListener("click", () => {
 
 applyTheme(readTheme());
 refreshAll();
+openStream();

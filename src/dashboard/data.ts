@@ -17,6 +17,7 @@ import {
   teamName,
 } from "../season.js";
 import type { NFLGame, SleeperMatchup, SleeperPlayer } from "../types.js";
+import { FeedPoller, type Topic } from "../feeds/poller.js";
 
 const LIVE_SCHEDULE_MS = 5 * 60 * 1000;
 const RISKY = new Set(["Out", "IR", "Doubtful", "Suspended", "PUP"]);
@@ -258,6 +259,24 @@ export async function getTransactions(ctx: DashboardContext) {
   };
 }
 
+// ---------- Background feeds (live scores, news, usage, schedule, values) ----------
+
+let poller: FeedPoller | null = null;
+
+/** Start the background poller once; panels below read its latest data. */
+export async function startFeeds(livePollMs: number): Promise<FeedPoller> {
+  if (poller) return poller;
+  const ctx = await resolveContext();
+  poller = new FeedPoller({ ...ctx, livePollMs });
+  await poller.start();
+  return poller;
+}
+
+const feedPanel = (topic: Topic) => async () => {
+  if (!poller) throw new Error("Live feeds are not running");
+  return (await poller.waitFor(topic)).data;
+};
+
 export const panels = {
   summary: getSummary,
   standings: getStandings,
@@ -265,6 +284,12 @@ export const panels = {
   roster: getRoster,
   "free-agents": getFreeAgents,
   transactions: getTransactions,
+  live: feedPanel("live"),
+  news: feedPanel("news"),
+  usage: feedPanel("usage"),
+  outlook: feedPanel("outlook"),
+  values: feedPanel("values"),
+  feeds: feedPanel("status"),
 } as const;
 
 export type PanelName = keyof typeof panels;

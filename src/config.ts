@@ -48,12 +48,21 @@ export interface SleeperConfig {
   mcpHttpPort: number;
   /** Secret path segment: the endpoint is /mcp/<secret>. */
   mcpHttpSecret?: string;
+  /** Dashboard live polling, in seconds, while one of your players is in a game. */
+  livePollSeconds: number;
 }
 
 export const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
 export const DEFAULT_DASHBOARD_PORT = 3030;
 export const DEFAULT_MCP_HTTP_HOST = "127.0.0.1";
 export const DEFAULT_MCP_HTTP_PORT = 3031;
+export const DEFAULT_LIVE_POLL_SECONDS = 2;
+
+/** Seconds between live polls: at least 1, at most 60. */
+function parseSeconds(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.min(60, Math.max(1, n)) : fallback;
+}
 
 function parsePort(value: string | undefined, fallback: number): number {
   const port = Number(value);
@@ -77,6 +86,10 @@ export function loadConfig(
     mcpHttpHost: pick("MCP_HTTP_HOST") || DEFAULT_MCP_HTTP_HOST,
     mcpHttpPort: parsePort(pick("MCP_HTTP_PORT"), DEFAULT_MCP_HTTP_PORT),
     mcpHttpSecret: pick("MCP_HTTP_SECRET"),
+    livePollSeconds: parseSeconds(
+      pick("LIVE_POLL_SECONDS"),
+      DEFAULT_LIVE_POLL_SECONDS,
+    ),
   };
 }
 

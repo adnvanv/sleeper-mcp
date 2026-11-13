@@ -31,6 +31,14 @@
 
     <main class="grid">
       <div class="col col-main">
+        <section class="panel area-live" data-panel="live">
+          <header class="panel-head">
+            <h2>Live</h2>
+            <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
         <section class="panel area-matchups" data-panel="matchups">
           <header class="panel-head">
             <h2>This week</h2>
@@ -43,6 +51,28 @@
           <header class="panel-head">
             <h2>Standings</h2>
             <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
+        <section class="panel area-outlook" data-panel="outlook">
+          <header class="panel-head">
+            <h2>Rest-of-season schedule</h2>
+            <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
+        <section class="panel area-values" data-panel="values">
+          <header class="panel-head">
+            <h2>Trade values</h2>
+            <span class="panel-note" data-note></span>
+            <div
+              class="chips"
+              role="group"
+              aria-label="Trade partner"
+              data-filters
+            ></div>
           </header>
           <div class="panel-body" data-body></div>
         </section>
@@ -61,10 +91,37 @@
         </section>
       </div>
       <div class="col col-side">
+        <section class="panel area-news" data-panel="news">
+          <header class="panel-head">
+            <h2>Player news</h2>
+            <div
+              class="chips"
+              role="group"
+              aria-label="Filter news"
+              data-filters
+            ></div>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
         <section class="panel area-roster" data-panel="roster">
           <header class="panel-head">
             <h2>My roster</h2>
             <span class="panel-note" data-note></span>
+          </header>
+          <div class="panel-body" data-body></div>
+        </section>
+
+        <section class="panel area-usage" data-panel="usage">
+          <header class="panel-head">
+            <h2>Usage risers</h2>
+            <span class="panel-note" data-note></span>
+            <div
+              class="chips"
+              role="group"
+              aria-label="Filter risers"
+              data-filters
+            ></div>
           </header>
           <div class="panel-body" data-body></div>
         </section>
@@ -80,8 +137,15 @@
     </main>
 
     <footer class="footer muted">
-      Read-only view of public Sleeper data. Values are this season's fantasy
-      points per game in your league's scoring.
+      <p>
+        Read-only view of public data from Sleeper (league, live scores,
+        projections, usage), ESPN (game clock, news), Rotowire (player news)
+        and FantasyCalc (trade values). Points are in your league's scoring.
+      </p>
+      <details class="feeds" data-panel="feeds">
+        <summary>Data feeds <span class="panel-note" data-note></span></summary>
+        <div data-body></div>
+      </details>
     </footer>
   </body>
 </html>

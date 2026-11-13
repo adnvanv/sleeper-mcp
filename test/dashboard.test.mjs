@@ -100,12 +100,18 @@ test("read-only: non-GET methods are rejected", async () => {
 
 test("real dashboard exposes the expected panels", () => {
   assert.deepEqual(Object.keys(panels).sort(), [
+    "feeds",
     "free-agents",
+    "live",
     "matchups",
+    "news",
+    "outlook",
     "roster",
     "standings",
     "summary",
     "transactions",
+    "usage",
+    "values",
   ]);
 });
 
@@ -134,4 +140,60 @@ test("game windows: December Saturdays are live", () => {
 test("refresh interval follows the game window", () => {
   assert.equal(refreshInterval(et("2026-11-15T18:00:00Z")), LIVE_INTERVAL_MS);
   assert.equal(refreshInterval(et("2026-11-18T17:00:00Z")), IDLE_INTERVAL_MS);
+});
+
+test("live stream sends current snapshots, then updates, and counts viewers", async () => {
+  const listeners = new Set();
+  let viewers = 0;
+  const streamServer = createDashboardServer({
+    getContext: async () => ({}),
+    panels: {},
+    stream: {
+      snapshots: () => [["live", { data: { week: 10 }, updated: "t0" }]],
+      subscribe: (fn) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+      addViewer: () => {
+        viewers++;
+        return () => viewers--;
+      },
+    },
+  });
+  await new Promise((resolve) => streamServer.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${streamServer.address().port}/api/stream`;
+  const controller = new AbortController();
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /text\/event-stream/);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    const readUntil = async (pattern) => {
+      while (!pattern.test(text)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value);
+      }
+    };
+    await readUntil(/event: live\ndata: .*\n\n/);
+    assert.match(text, /data: \{"data":\{"week":10\},"updated":"t0"\}/);
+    assert.equal(viewers, 1);
+    for (const fn of listeners) fn("news", { data: { items: [] }, updated: "t1" });
+    await readUntil(/event: news/);
+    assert.match(text, /event: news\ndata: \{"data":\{"items":\[\]\},"updated":"t1"\}/);
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(viewers, 0);
+    assert.equal(listeners.size, 0);
+  } finally {
+    controller.abort();
+    streamServer.close();
+  }
+});
+
+test("stream route is a 404 when no stream is configured", async () => {
+  const res = await fetch(`${base}/api/stream`);
+  assert.equal(res.status, 404);
 });

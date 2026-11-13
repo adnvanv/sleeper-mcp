@@ -127,10 +127,17 @@ sleeper-mcp/
 │   ├── transaction-feed.ts   Readable league activity feed
 │   ├── types.ts              Sleeper API types
 │   ├── utils.ts              Upstream helpers (unchanged)
+│   ├── feeds/
+│   │   ├── poller.ts         Background poller: schedules, snapshots, live events
+│   │   ├── live.ts           ESPN scoreboard, live sides, win chance, score events
+│   │   ├── news.ts           Rotowire/ESPN news parsing, player matching, tagging
+│   │   ├── analysis.ts       Projections, usage trends, points allowed, schedule, values
+│   │   ├── rss.ts            Minimal RSS parser
+│   │   └── http.ts           fetch with timeout and generic User-Agent
 │   └── dashboard/
 │       ├── server.ts         node:http server, static files + JSON API
 │       └── data.ts           One function per dashboard panel
-├── dashboard/public/         Frontend: index.html, app.js, refresh.js, styles.css
+├── dashboard/public/         Frontend: index.html, app.js, feeds.js, dom.js, refresh.js, styles.css
 ├── test/                     Offline unit tests (node:test), one file per module
 ├── test.mjs                  Upstream MCP protocol tests (live API)
 ├── scripts/smoke.mjs         Call any tool against the live API from the terminal
@@ -190,6 +197,7 @@ folder Claude Desktop starts in):
 | `SLEEPER_LEAGUE_ID` | your only league this season | Default league |
 | `DASHBOARD_HOST` | `127.0.0.1` | `0.0.0.0` to allow other devices |
 | `DASHBOARD_PORT` | `3030` | Dashboard port |
+| `LIVE_POLL_SECONDS` | `2` | Score polling while one of your players is in a game (1-60) |
 
 `DefaultsResolver` applies them per tool:
 
@@ -343,6 +351,56 @@ feed also counts moves by type and by team.
 - Host and port come from config. If the port is taken, startup fails with a
   clear message.
 
+### Live feeds (`src/feeds/`)
+
+The dashboard process also runs a background poller (`feeds/poller.ts`) that
+pulls outside data on its own schedule and pushes changes to open pages as
+server-sent events (`GET /api/stream`). Every feed is public, needs no login,
+and is read with a generic User-Agent.
+
+| Feed | Source | Used for |
+| --- | --- | --- |
+| League scores | Sleeper `/league/{id}/matchups/{week}` | Live points in your scoring |
+| Live stat lines | Sleeper `/v1/stats/nfl/regular/{season}/{week}` | "6 rec (8 tgt) 74 yd" |
+| Projections | Sleeper `/v1/projections/nfl/regular/{season}/{week}` | Projected finals and win chance, re-scored with your league settings |
+| Game state | ESPN scoreboard API | Clock, score, possession, red zone, last play |
+| Player news | Rotowire NFL RSS, ESPN news API | News tagged mine / league / free agent and returning / injury / role / move |
+| Weekly stats | Sleeper `/stats/nfl/{season}/{week}` | Snap, target and carry share; points allowed by defense |
+| Trade values | FantasyCalc `/values/current` | Redraft values matched to your league's format |
+
+**How often.** The poller decides each feed's next run from the game state:
+
+| Mode | When | Scores | Game clock / stat lines | News |
+| --- | --- | --- | --- | --- |
+| Fast | One of **your** rostered players is in a game | every `LIVE_POLL_SECONDS` (default 2 s) | every 5 s with the page open, 30 s without | every 2 min |
+| Game day | Any game live, or kickoff within 15 min | every 1 min | every 30-60 s | every 2 min |
+| Idle | Otherwise | every 10 min | every 10-30 min | every 5 min (2 min on game days) |
+
+Projections refresh every 30 minutes; weekly stats and trade values every 6
+hours. Finished weeks of stats are cached on disk (`.cache/stats-*.json`), and
+news is kept in `.cache/news.json` (last 400 items). A failing feed keeps its
+last good data and backs off, doubling up to 15 minutes.
+
+**Matching news to players.** Rotowire links carry Rotowire's player ID and
+ESPN tags athletes with ESPN IDs; Sleeper's player database has both. A name
+match is the fallback, and only when exactly one player on an NFL team has
+that name.
+
+**Usage risers** compare each RB/WR/TE's last two games with their earlier
+games (at least two). Rank = change in targets + carries a game, plus the
+snap-share change (each 10 points of snap share counts as 2). A growing role
+predicts breakouts better than one big week.
+
+**Schedule strength** sums the fantasy points (your scoring) every defense
+allowed to each position per game this season and ranks them 1-32 (1 = gives
+up the most = easiest). Each of your players gets the rank for every remaining
+opponent through the fantasy playoffs, plus averages for rest of season and
+playoffs.
+
+**Win chance** treats each starter's remaining projection as uncertain (a
+standard deviation of 60% of what's left, plus a small floor) and compares
+the two projected finals with a normal approximation. It's a rough guide.
+
 ### Frontend (`dashboard/public/`)
 
 - Plain HTML, CSS and ES modules, with no build step and no CDN. The page
@@ -373,7 +431,7 @@ feed also counts moves by type and by team.
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 79 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint |
+| `test/*.test.mjs` (node:test) | 102 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out
@@ -388,10 +446,16 @@ of starting the stdio server.
 
 ## 10. Limitations
 
-- **No projections.** Sleeper's public API has no projections, so "value" is
-  points already scored. It doesn't know about a new starting role or a tough
-  schedule ahead. That makes the tools better for "who has produced" than
-  "who will produce".
+- **The MCP tools don't use projections yet.** The dashboard now reads
+  Sleeper's weekly projections, usage trends and schedule strength, but the
+  MCP tools still value players on points already scored.
+- **Paywalled and login-only sources aren't scraped.** FantasyPros,
+  PlayerProfiler, Fantasy Points Data, Establish The Run and X need accounts
+  or forbid scraping; KeepTradeCut forbids scraping. The dashboard uses public
+  feeds that cover the same ground (see Live feeds).
+- **Live data is only as fast as its source.** Polling every 2 seconds shows a
+  change as soon as Sleeper or ESPN publishes it, which during games is
+  usually within several seconds of the play.
 - **1-for-1 trades only.** The trade finder doesn't build 2-for-1 deals, and
   it values only the current season (not keepers, dynasty or draft picks).
 - **Live "yet to play"** uses NFL game status from the schedule (refreshed
@@ -420,6 +484,9 @@ of starting the stdio server.
   script, and these docs.
 - Added: HTTP mode (MCP Streamable HTTP, stateless) for claude.ai custom
   connectors and the phone app, after upgrading the MCP SDK from 0.4 to 1.x.
+- Added: dashboard live feeds: live scoring with projections and win chance,
+  player news, usage risers, rest-of-season schedule strength, and a trade
+  value calculator, pushed to the page as server-sent events.
 
 ## 12. Ideas for later
 
