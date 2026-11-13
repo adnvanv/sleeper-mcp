@@ -54,8 +54,10 @@ export interface AdvisorInput {
   news: Map<string, PlayerNewsBrief>;
   /** Players dropped recently, still on waivers: player_id → clears at (ISO). */
   waivers: Map<string, string>;
-  /** News, recent usage and market signals, with an adjusted points-a-game estimate. */
+  /** News, recent usage and market signals (shown as reasons and hold flags). */
   outlooks?: Map<string, Outlook>;
+  /** Scale projections toward recent usage (off by default; see adjustFactor). */
+  useBlend?: boolean;
   now?: Date;
 }
 
@@ -131,6 +133,10 @@ function weekList(from: number, through: number): number[] {
  * projections keep their shape (byes, matchups) but move to the new level.
  */
 export function adjustFactor(id: string, input: AdvisorInput): number {
+  // Off unless asked for: a backtest of weeks 4-9 (1,244 player-weeks) found
+  // the usage blend no more accurate than Sleeper's projection (avg miss 4.87
+  // vs 4.84), so projections stay Sleeper's and the signals become reasons.
+  if (!input.useBlend) return 1;
   const o = input.outlooks?.get(id);
   if (!o || o.adjusted_ppg == null || !o.projected_ppg) return 1;
   return Math.max(0.3, Math.min(2.5, o.adjusted_ppg / o.projected_ppg));

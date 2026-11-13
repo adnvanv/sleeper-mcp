@@ -262,7 +262,7 @@ function teamRow(r, { flash } = {}) {
       "div",
       { class: "score" },
       h("div", { class: `pts pts-${r.pace || "none"}` }, started ? [paceArrow(r.pace), r1(r.points)] : "–"),
-      h("div", { class: "proj" }, r.proj == null ? "" : `proj. ${r1(r.proj)}`),
+      h("div", { class: "proj" }, r.sleeper_proj == null ? "" : `proj. ${r.sleeper_proj.toFixed(2)}`),
     ),
   );
 }
@@ -781,7 +781,7 @@ function renderWaivers(el) {
     h(
       "p",
       { class: "legend" },
-      "Expected points blend Sleeper's projection with each player's recent usage (games actually played), news and Sleeper-wide adds. For every week through your playoffs the advisor builds your best lineup; ROS pts is how much a swap improves it, so byes, injuries and position needs are counted. Points next to drop candidates = starting points your lineups lose without him.",
+      "Projections are Sleeper's, in your league's scoring. For every week through your playoffs the advisor builds your best lineup from them; ROS pts is how much a swap improves it, so byes, injuries and position needs are counted. Recent usage, news and Sleeper-wide adds are shown as reasons and \"think twice\" warnings. Points next to drop candidates = starting points your lineups lose without him.",
     ),
   );
 }
@@ -1212,8 +1212,8 @@ async function openSheet(id) {
     h(
       "div",
       { class: "kpis" },
-      kpi(`Week ${p.week} proj`, r1(p.week_proj), p.sleeper_proj != null ? `Sleeper ${r1(p.sleeper_proj)}` : null),
-      kpi("Expected / game", r1(o?.adjusted_ppg), o?.projected_ppg != null ? `Sleeper ${r1(o.projected_ppg)}` : null),
+      kpi(`Week ${p.week} proj`, p.sleeper_proj != null ? p.sleeper_proj.toFixed(2) : "–", "Sleeper"),
+      kpi("ROS proj / game", r1(o?.projected_ppg), "Sleeper"),
       kpi("Recent / game", r1(o?.recent_ppg), "games played"),
       kpi("Trade value", p.value ? p.value.value.toLocaleString() : "–", p.value?.position_rank ? `${p.position}${p.value.position_rank}` : null),
     ),

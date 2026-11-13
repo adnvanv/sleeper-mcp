@@ -735,8 +735,19 @@ test("outlook leans on recent usage more when the market agrees", () => {
   assert.equal(outlook({ name: "D", position: "WR", projectedPpg: null, games: GAMES, news: quiet, market }).adjusted_ppg, base.recent_ppg);
 });
 
-test("advisor uses the adjusted estimate instead of the raw projection", () => {
+test("projections stay Sleeper's unless the blend is switched on", () => {
   const input = advisorLeague();
+  input.outlooks = new Map([
+    ["r3", { projected_ppg: 3, adjusted_ppg: 6, notes: [], hold_flags: ["Other managers are chasing him"], news: { quotes: [] } }],
+  ]);
+  const r3 = advise(input).drops.find((d) => d.player.player_id === "r3");
+  assert.equal(r3.player.ros_ppg, 3);
+  assert.notEqual(r3.verdict, "drop"); // hold flags still protect him
+});
+
+test("advisor uses the adjusted estimate when the blend is on", () => {
+  const input = advisorLeague();
+  input.useBlend = true;
   // r3 is barely projected but has been used heavily: recent usage says 6 a game
   input.outlooks = new Map([
     ["r3", { projected_ppg: 3, adjusted_ppg: 6, notes: ["n"], hold_flags: ["Other managers are chasing him"], news: { quotes: [] } }],

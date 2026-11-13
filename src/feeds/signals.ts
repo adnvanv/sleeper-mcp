@@ -317,7 +317,8 @@ export function outlook(input: {
   }
   if (recent != null && input.projectedPpg != null && Math.abs(recent - input.projectedPpg) >= 2) {
     notes.push(
-      `Recent usage points to ${recent} a game vs Sleeper's ${input.projectedPpg} projection; weighting recent usage ${Math.round(w * 100)}% → ${adjusted}`,
+      `Recent usage is worth about ${recent} a game vs Sleeper's ${input.projectedPpg} projection` +
+        (recent > input.projectedPpg ? "; if his role holds, the projection is likely to rise" : "; his projection may drop"),
     );
   }
   if (market.adds_24h >= 1000) {

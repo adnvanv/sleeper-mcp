@@ -440,7 +440,17 @@ an adjusted points-a-game estimate:
   matching sentences are kept as quotes and shown in the app. A return only
   counts if he missed 3+ games and has played in the last two weeks.
 - **The market.** Sleeper-wide adds and drops in the last 24 hours, with rank.
-- **The blend.** Recent usage gets 15% weight per game played (up to 45%),
+- **Projections stay Sleeper's.** A backtest of weeks 4-9 (1,244
+  fantasy-relevant player-weeks, scored in league scoring, using only data
+  from before each week) found the blend below no more accurate than
+  Sleeper's own projection: average miss 4.87 vs 4.84 points, and worse
+  where the two disagreed by 2+ points (5.75 vs 5.38), except at RB. Lighter
+  blends only tied Sleeper. So every projection shown, and the advisor's
+  lineup math, use Sleeper's numbers (they match the app to the hundredth);
+  the signals appear as reasons, notes and hold flags. The backtest couldn't
+  include news or market signals (no history for those). The blend is still
+  available behind `useBlend` in the advisor, off by default.
+- **The blend (off by default).** Recent usage gets 15% weight per game played (up to 45%),
   +20% when the market is chasing him (top-50 adds), +10% for a return or
   ramp-up, −10% for a WR3-type role after a spike, capped at 75% (25% for QB,
   K and DEF, whose scores swing on game script). The advisor scales each
@@ -505,7 +515,10 @@ outside image host the Content-Security-Policy allows).
 - **Matchup bar** pinned to the bottom of the MATCHUP tab: previous/next
   week and a selector for any matchup in the league. Past weeks show final
   scores with each starter's stat line (`/api/matchup?week=&id=`).
-- **Installable.** `manifest.webmanifest`, app icons and iOS meta tags let
+- **Installable.** Served privately over HTTPS at
+  `https://<server>.<tailnet>.ts.net:8443` by `tailscale serve` (tailnet
+  only; the Funnel on 443 still serves only the MCP endpoint).
+   `manifest.webmanifest`, app icons and iOS meta tags let
   it be added to a phone's home screen and open full screen. Phones only
   allow that over HTTPS: serve the dashboard through Tailscale
   (`tailscale serve --bg --https=8443 http://<tailscale-ip>:3030`), which
@@ -559,7 +572,7 @@ outside image host the Content-Security-Policy allows).
 
 | Suite | Count | Network | Covers |
 | --- | --- | --- | --- |
-| `test/*.test.mjs` (node:test) | 123 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
+| `test/*.test.mjs` (node:test) | 124 | No | config, defaults, season helpers, all-play, free agents, scout, trade finder, transaction feed, dashboard server, refresh schedule, HTTP MCP endpoint, live feeds (RSS, news matching, scoreboard, win chance, usage, schedule strength, trade values), activity stream (play matching, headlines), per-player news and dedupe, news reading and adjusted outlooks, waiver advisor, live stream |
 | `test.mjs` (upstream) | 13 | Yes | MCP protocol: startup, tool list, calls, error handling |
 
 The unit tests use small hand-built leagues whose answers can be worked out
