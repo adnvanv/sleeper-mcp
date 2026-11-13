@@ -2518,3 +2518,15 @@ button.score-card:focus-visible {
   color: var(--muted);
   margin-top: 4px;
 }
+
+.pcard .fpts .fp-proj {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.pcard .statrow {
+  padding: 0 14px 8px 68px;
+  font-size: 0.74rem;
+  color: var(--text);
+}

@@ -277,6 +277,10 @@ export async function playersIndex(st: State) {
     const owner = owners.get(id);
     const game = gameFor(p.team, week, byTeam, data.schedule);
     const last = o?.last_games?.slice(-1)[0];
+    // This week's points so far (live stats, league scoring); null before kickoff.
+    const live = st.liveStats[id];
+    const started = game.state === "in" || game.state === "post";
+    const weekPoints = started ? r1(live ? leaguePoints(live, data.league.scoring_settings) : 0) : null;
     out.push({
       player_id: id,
       name: name(p, id),
@@ -289,7 +293,10 @@ export async function playersIndex(st: State) {
       is_mine: owner?.roster_id === mine?.roster_id,
       week_proj: proj,
       ros_ppg: games ? r1(ros / games) : null,
-      game: { start: game.start, opponent: game.opponent, home: game.home, state: game.state, difficulty: game.opponent ? st.allowed.get(p.position)?.get(game.opponent)?.rank ?? null : null },
+      week_points: weekPoints,
+      pace: weekPoints == null ? null : paceOf(weekPoints, proj, game.state, game.fraction_left),
+      stat_line: started ? statLine(live, p.position) : "",
+      game: { start: game.start, detail: game.detail, opponent: game.opponent, home: game.home, state: game.state, difficulty: game.opponent ? st.allowed.get(p.position)?.get(game.opponent)?.rank ?? null : null },
       adds: o?.market.adds_24h || 0,
       add_rank: o?.market.add_rank ?? null,
       recent_ppg: o?.recent_ppg ?? null,

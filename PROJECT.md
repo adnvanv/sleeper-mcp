@@ -558,7 +558,9 @@ outside image host the Content-Security-Policy allows).
   (season points in your scoring) and ACTIVITY (your players' plays and
   news). Each card shows ROS points a game, last-3 average, snap share,
   targets, adds and season total, plus the advisor's gain if it recommends
-  him.
+  him. Once a player's game kicks off, the card shows his points this week
+  (live, then final) with green/red pace, his projection and stat line; the
+  pane refreshes with the live scores.
 - **Player sheet.** Tap any player anywhere for a slide-over (bottom sheet on
   phones): this week's adjusted and Sleeper projections, expected and recent
   points a game, trade value, hold warnings, outlook notes, news quotes,

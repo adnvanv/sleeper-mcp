@@ -1064,8 +1064,17 @@ function playerCard(p, rank, mode) {
         h("div", { class: "line" }, posTag(p.position), ` · ${p.team || "FA"}${p.bye ? ` (${p.bye})` : ""}`, p.owner ? h("span", { class: "owner-tag" }, ` · ${p.is_mine ? "Your team" : p.owner}`) : null),
         h("div", { class: "line" }, gameWhen(p.game), p.game?.opponent ? " " : "", oppText(p.game, p.position)),
       ),
-      h("div", { class: "fpts" }, h("b", {}, r1(fp)), h("span", {}, label)),
+      p.week_points != null && mode !== "leaders" && mode !== "ros"
+        ? h(
+            "div",
+            { class: "fpts" },
+            h("b", { class: `pts-${p.pace || "none"}` }, paceArrow(p.pace), r1(p.week_points)),
+            h("span", {}, p.game?.state === "in" ? "LIVE" : "FINAL"),
+            h("small", { class: "fp-proj" }, `proj ${r1(p.week_proj)}`),
+          )
+        : h("div", { class: "fpts" }, h("b", {}, r1(fp)), h("span", {}, label)),
     ),
+    p.stat_line ? h("div", { class: "statrow" }, p.stat_line) : null,
     h(
       "div",
       { class: "strip" },
@@ -1495,6 +1504,7 @@ function openStream() {
         lastLiveRefetch = Date.now();
         load("team");
         load("matchups");
+        load("players");
         if (!viewingMyLiveMatchup() && (ui.mWeek == null || ui.mWeek === S.summary?.week)) loadMatchupView();
       }
       if (topic === "advice") load("players");
